@@ -431,6 +431,146 @@ async def get_public_stats(
     }
 
 
+@zhiyuan.get("/stats/health")
+async def get_data_health(
+    db: AsyncSession = Depends(get_db),
+):
+    """数据完整度健康检查（管理端展示用，无需认证）。
+
+    返回各业务维度的数据缺失情况，用于评估数据完整度：
+    - 缺失重点学科的院校数
+    - 缺失硕士点/博士点的院校数
+    - 缺失网站链接的院校数
+    - 无专业的院校数
+    - 无录取分数的院校数
+    - 无招生计划的院校数
+    """
+    # 缺失重点学科
+    no_disciplines = (
+        await db.execute(
+            select(func.count()).select_from(
+                select(University)
+                .where(
+                    (University.key_disciplines.is_(None))
+                    | (University.key_disciplines == "")
+                )
+                .subquery()
+            )
+        )
+    ).scalar() or 0
+
+    # 缺失硕士点/博士点
+    no_master = (
+        await db.execute(
+            select(func.count()).select_from(
+                select(University)
+                .where((University.master_points.is_(None)) | (University.master_points == 0))
+                .subquery()
+            )
+        )
+    ).scalar() or 0
+    no_doctor = (
+        await db.execute(
+            select(func.count()).select_from(
+                select(University)
+                .where((University.doctor_points.is_(None)) | (University.doctor_points == 0))
+                .subquery()
+            )
+        )
+    ).scalar() or 0
+
+    # 缺失网站
+    no_website = (
+        await db.execute(
+            select(func.count()).select_from(
+                select(University)
+                .where((University.website.is_(None)) | (University.website == ""))
+                .subquery()
+            )
+        )
+    ).scalar() or 0
+
+    # 无专业的院校数
+    uni_with_majors = (
+        await db.execute(select(func.distinct(Major.university_id)))
+    ).scalars().all()
+    uni_with_majors_set = set(uni_with_majors)
+    uni_total = (
+        await db.execute(select(func.count()).select_from(University))
+    ).scalar() or 0
+    no_majors = max(0, uni_total - len(uni_with_majors_set))
+
+    # 无录取分数的院校数
+    uni_with_scores = (
+        await db.execute(select(func.distinct(AdmissionScore.university_id)))
+    ).scalars().all()
+    uni_with_scores_set = set(uni_with_scores)
+    no_scores = max(0, uni_total - len(uni_with_scores_set))
+
+    # 无招生计划的院校数
+    uni_with_plans = (
+        await db.execute(select(func.distinct(EnrollmentPlan.university_id)))
+    ).scalars().all()
+    uni_with_plans_set = set(uni_with_plans)
+    no_plans = max(0, uni_total - len(uni_with_plans_set))
+
+    # 综合健康分（0-100）：每个维度权重相同
+    total_checks = 6
+    passed = 0
+    if uni_total == 0:
+        return {
+            "message": "ok",
+            "data": {
+                "total_universities": 0,
+                "health_score": 0,
+                "issues": {"empty_data": "院校库为空"},
+            },
+        }
+    weights = {
+        "no_disciplines": 0.10,
+        "no_master": 0.10,
+        "no_doctor": 0.10,
+        "no_website": 0.10,
+        "no_majors": 0.25,
+        "no_scores": 0.20,
+        "no_plans": 0.15,
+    }
+    score_loss = 0.0
+    issues = {}
+    for key, missing in {
+        "no_disciplines": no_disciplines,
+        "no_master": no_master,
+        "no_doctor": no_doctor,
+        "no_website": no_website,
+        "no_majors": no_majors,
+        "no_scores": no_scores,
+        "no_plans": no_plans,
+    }.items():
+        if missing > 0:
+            ratio = missing / uni_total
+            score_loss += ratio * weights[key] * 100
+            issues[key] = missing
+    health_score = max(0, round(100 - score_loss))
+
+    return {
+        "message": "ok",
+        "data": {
+            "total_universities": uni_total,
+            "health_score": health_score,
+            "issues": issues,
+            "details": {
+                "no_disciplines": no_disciplines,
+                "no_master": no_master,
+                "no_doctor": no_doctor,
+                "no_website": no_website,
+                "no_majors": no_majors,
+                "no_scores": no_scores,
+                "no_plans": no_plans,
+            },
+        },
+    }
+
+
 # ========== 管理端 CRUD 接口 ==========
 
 admin = APIRouter(prefix="/zhiyuan/admin", tags=["zhiyuan-admin"])

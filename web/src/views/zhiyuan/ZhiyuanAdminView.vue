@@ -5,6 +5,52 @@
       <p class="subtitle">管理院校、专业、录取分数、志愿规则与招生计划数据</p>
     </div>
 
+    <!-- 数据看板 -->
+    <div class="dashboard" v-if="dashStats">
+      <div class="dash-card" v-for="item in dashItems" :key="item.label">
+        <div class="dash-icon" :style="{ background: item.color }">
+          <component :is="item.icon" :size="20" />
+        </div>
+        <div class="dash-info">
+          <span class="dash-number">{{ item.value }}</span>
+          <span class="dash-label">{{ item.label }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 数据健康度 -->
+    <div class="health-panel" v-if="healthData">
+      <div class="health-header">
+        <h3 class="health-title">数据完整度</h3>
+        <div class="health-score-wrapper">
+          <div
+            class="health-score-bar"
+            :style="{
+              width: healthData.health_score + '%',
+              background: healthScoreColor,
+            }"
+          ></div>
+          <span class="health-score-text" :style="{ color: healthScoreColor }">
+            {{ healthData.health_score }}/100
+          </span>
+        </div>
+      </div>
+      <div class="health-issues" v-if="healthItems.length > 0">
+        <div class="health-issue" v-for="issue in healthItems" :key="issue.key">
+          <span class="issue-label">{{ issue.label }}</span>
+          <a-tag color="orange">{{ issue.value }} 所</a-tag>
+        </div>
+      </div>
+      <a-alert
+        v-else
+        type="success"
+        message="数据完整度良好"
+        description="所有院校均具备完整的学科、分数、计划等关键数据"
+        show-icon
+        style="margin-top: 12px"
+      />
+    </div>
+
     <a-tabs v-model:activeKey="activeTab" type="card" @change="onTabChange">
       <!-- ========== 院校管理 ========== -->
       <a-tab-pane key="university" tab="院校管理">
@@ -704,6 +750,14 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
 import { zhiyuanApi } from '@/apis/zhiyuan_api'
 import {
+  Building2,
+  BookOpen,
+  TrendingUp,
+  BarChart3,
+  ClipboardList,
+  MapPin,
+} from 'lucide-vue-next'
+import {
   PROVINCES,
   SUBJECT_TYPES,
   UNIVERSITY_LEVELS,
@@ -716,6 +770,45 @@ const universityLevels = UNIVERSITY_LEVELS
 const universityTypes = UNIVERSITY_TYPES
 
 const activeTab = ref('university')
+
+// ========== 数据看板 ==========
+const dashStats = ref(null)
+const dashItems = computed(() => {
+  if (!dashStats.value) return []
+  return [
+    { label: '院校', value: dashStats.value.universities || 0, icon: Building2, color: 'linear-gradient(135deg, #035064, #0a8499)' },
+    { label: '专业', value: dashStats.value.majors || 0, icon: BookOpen, color: 'linear-gradient(135deg, #2563eb, #1d4ed8)' },
+    { label: '录取分数', value: dashStats.value.admission_scores || 0, icon: TrendingUp, color: 'linear-gradient(135deg, #059669, #10b981)' },
+    { label: '位次数据', value: dashStats.value.score_ranks || 0, icon: BarChart3, color: 'linear-gradient(135deg, #7c3aed, #6d28d9)' },
+    { label: '招生计划', value: dashStats.value.enrollment_plans || 0, icon: ClipboardList, color: 'linear-gradient(135deg, #ea580c, #f97316)' },
+    { label: '覆盖省份', value: dashStats.value.provinces_covered || 0, icon: MapPin, color: 'linear-gradient(135deg, #dc2626, #ef4444)' },
+  ]
+})
+
+// ========== 数据健康度 ==========
+const healthData = ref(null)
+const healthScoreColor = computed(() => {
+  if (!healthData.value) return 'var(--gray-500)'
+  const s = healthData.value.health_score
+  if (s >= 85) return '#10b981'
+  if (s >= 60) return '#f59e0b'
+  return '#ef4444'
+})
+const healthItems = computed(() => {
+  if (!healthData.value || !healthData.value.issues) return []
+  const labels = {
+    no_disciplines: '缺失重点学科',
+    no_master: '缺失硕士点',
+    no_doctor: '缺失博士点',
+    no_website: '缺失官网链接',
+    no_majors: '无专业数据',
+    no_scores: '无录取分数',
+    no_plans: '无招生计划',
+  }
+  return Object.entries(healthData.value.issues)
+    .filter(([k]) => k !== 'empty_data')
+    .map(([k, v]) => ({ key: k, label: labels[k] || k, value: v }))
+})
 
 // ========== 院校/专业下拉选项（用于专业/分数/计划表单的级联选择） ==========
 const universityOptions = ref([])  // [{ label: '清华大学', value: 1 }, ...]
@@ -1365,9 +1458,29 @@ function onTabChange(key) {
   else if (key === 'plan') loadPlans()
 }
 
+async function loadDashStats() {
+  try {
+    const res = await zhiyuanApi.getPublicStats()
+    dashStats.value = res?.data || null
+  } catch (e) {
+    console.error('加载统计数据失败:', e?.message || e)
+  }
+}
+
+async function loadHealthData() {
+  try {
+    const res = await zhiyuanApi.getDataHealth()
+    healthData.value = res?.data || null
+  } catch (e) {
+    console.error('加载健康度失败:', e?.message || e)
+  }
+}
+
 onMounted(() => {
   loadUniversities()
   loadUniversityOptions()
+  loadDashStats()
+  loadHealthData()
 })
 </script>
 
@@ -1411,5 +1524,130 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
+}
+
+// ========== 数据看板 ==========
+.dashboard {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.dash-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--gray-0);
+  border: 1px solid var(--gray-150);
+  border-radius: 10px;
+  transition:
+    box-shadow 0.2s ease,
+    transform 0.15s ease;
+
+  &:hover {
+    box-shadow: 0 6px 18px var(--shadow-2);
+    transform: translateY(-2px);
+  }
+}
+
+.dash-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.dash-info {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+
+  .dash-number {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--gray-1000);
+  }
+
+  .dash-label {
+    font-size: 12px;
+    color: var(--gray-600);
+    margin-top: 2px;
+  }
+}
+
+// ========== 数据健康度 ==========
+.health-panel {
+  background: var(--gray-0);
+  border: 1px solid var(--gray-150);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin-bottom: 24px;
+}
+
+.health-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.health-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--gray-800);
+}
+
+.health-score-wrapper {
+  position: relative;
+  flex: 1;
+  max-width: 360px;
+  height: 24px;
+  background: var(--gray-100);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.health-score-bar {
+  height: 100%;
+  border-radius: 12px;
+  transition: width 0.4s ease;
+}
+
+.health-score-text {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  font-weight: 700;
+  z-index: 1;
+}
+
+.health-issues {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.health-issue {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--gray-10);
+  border-radius: 6px;
+
+  .issue-label {
+    font-size: 12px;
+    color: var(--gray-700);
+  }
 }
 </style>

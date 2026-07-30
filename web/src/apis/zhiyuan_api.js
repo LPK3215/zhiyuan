@@ -37,6 +37,10 @@ export const zhiyuanApi = {
   getPublicStats: () =>
     apiGet('/api/zhiyuan/stats', {}, false),
 
+  /** 数据完整度健康检查（无需认证） */
+  getDataHealth: () =>
+    apiGet('/api/zhiyuan/stats/health', {}, false),
+
   /** 搜索院校 */
   searchUniversities: (params = {}) =>
 apiGet(`/api/zhiyuan/universities${buildQueryString(params)}`),
