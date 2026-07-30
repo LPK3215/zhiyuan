@@ -70,6 +70,9 @@
             @search="onMajorSearch"
           />
           <a-button type="primary" @click="openMajorModal(null)">新增专业</a-button>
+          <a-button :loading="importState.importing && importState.type === 'major'" @click="openImportDialog('major')">
+            导入Excel
+          </a-button>
         </div>
         <a-table
           :dataSource="majorState.list"
@@ -137,6 +140,9 @@
           />
           <a-button type="primary" @click="onScoreSearch">查询</a-button>
           <a-button type="primary" @click="openScoreModal(null)">新增分数</a-button>
+          <a-button :loading="importState.importing && importState.type === 'score'" @click="openImportDialog('score')">
+            导入Excel
+          </a-button>
         </div>
         <a-table
           :dataSource="scoreState.list"
@@ -277,6 +283,15 @@
       </a-tab-pane>
     </a-tabs>
 
+    <!-- 隐藏的文件上传输入（用于 Excel/CSV 导入） -->
+    <input
+      ref="importFileInput"
+      type="file"
+      accept=".xlsx,.xls,.csv"
+      style="display: none"
+      @change="onImportFileChange"
+    />
+
     <!-- ========== 院校表单 Modal ========== -->
     <a-modal
       v-model:open="uniState.modalVisible"
@@ -371,9 +386,16 @@
     >
       <a-form :model="majorState.form" layout="vertical">
         <a-row :gutter="16">
-          <a-col :span="8">
-            <a-form-item label="所属院校ID" required>
-              <a-input-number v-model:value="majorState.form.university_id" :min="1" style="width: 100%" />
+          <a-col :span="12">
+            <a-form-item label="所属院校" required>
+              <a-select
+                v-model:value="majorState.form.university_id"
+                placeholder="搜索选择院校"
+                show-search
+                :filter-option="filterUniversityOption"
+                :options="universityOptions"
+                style="width: 100%"
+              />
             </a-form-item>
           </a-col>
           <a-col :span="10">
@@ -447,14 +469,28 @@
     >
       <a-form :model="scoreState.form" layout="vertical">
         <a-row :gutter="16">
-          <a-col :span="8">
-            <a-form-item label="院校ID" required>
-              <a-input-number v-model:value="scoreState.form.university_id" :min="1" style="width: 100%" />
+          <a-col :span="12">
+            <a-form-item label="院校" required>
+              <a-select
+                v-model:value="scoreState.form.university_id"
+                placeholder="搜索选择院校"
+                show-search
+                :filter-option="filterUniversityOption"
+                :options="universityOptions"
+                style="width: 100%"
+                @change="onScoreUniversityChange"
+              />
             </a-form-item>
           </a-col>
-          <a-col :span="8">
-            <a-form-item label="专业ID">
-              <a-input-number v-model:value="scoreState.form.major_id" :min="0" style="width: 100%" />
+          <a-col :span="12">
+            <a-form-item label="专业（0=院校整体线）">
+              <a-select
+                v-model:value="scoreState.form.major_id"
+                placeholder="选择专业（可选）"
+                allow-clear
+                :options="scoreMajorOptions"
+                style="width: 100%"
+              />
             </a-form-item>
           </a-col>
           <a-col :span="8">
@@ -471,7 +507,7 @@
           </a-col>
           <a-col :span="6">
             <a-form-item label="科类">
-              <a-select v-model:value="scoreState.form.subject_type" placeholder="科类" allow-clear>
+              <a-select v-model:value="scoreState.form.subject_type" placeholder="科类" allow-clear show-search>
                 <a-select-option v-for="s in subjectTypes" :key="s" :value="s">{{ s }}</a-select-option>
               </a-select>
             </a-form-item>
@@ -586,14 +622,28 @@
     >
       <a-form :model="planState.form" layout="vertical">
         <a-row :gutter="16">
-          <a-col :span="8">
-            <a-form-item label="院校ID" required>
-              <a-input-number v-model:value="planState.form.university_id" :min="1" style="width: 100%" />
+          <a-col :span="12">
+            <a-form-item label="院校" required>
+              <a-select
+                v-model:value="planState.form.university_id"
+                placeholder="搜索选择院校"
+                show-search
+                :filter-option="filterUniversityOption"
+                :options="universityOptions"
+                style="width: 100%"
+                @change="onPlanUniversityChange"
+              />
             </a-form-item>
           </a-col>
-          <a-col :span="8">
-            <a-form-item label="专业ID">
-              <a-input-number v-model:value="planState.form.major_id" :min="0" style="width: 100%" />
+          <a-col :span="12">
+            <a-form-item label="专业（0=院校整体线）">
+              <a-select
+                v-model:value="planState.form.major_id"
+                placeholder="选择专业（可选）"
+                allow-clear
+                :options="planMajorOptions"
+                style="width: 100%"
+              />
             </a-form-item>
           </a-col>
           <a-col :span="8">
@@ -610,7 +660,7 @@
           </a-col>
           <a-col :span="6">
             <a-form-item label="科类">
-              <a-select v-model:value="planState.form.subject_type" placeholder="科类" allow-clear>
+              <a-select v-model:value="planState.form.subject_type" placeholder="科类" allow-clear show-search>
                 <a-select-option v-for="s in subjectTypes" :key="s" :value="s">{{ s }}</a-select-option>
               </a-select>
             </a-form-item>
@@ -663,6 +713,58 @@ const universityLevels = UNIVERSITY_LEVELS
 const universityTypes = UNIVERSITY_TYPES
 
 const activeTab = ref('university')
+
+// ========== 院校/专业下拉选项（用于专业/分数/计划表单的级联选择） ==========
+const universityOptions = ref([])  // [{ label: '清华大学', value: 1 }, ...]
+const scoreMajorOptions = ref([])  // 分数表单中当前院校的专业列表
+const planMajorOptions = ref([])   // 计划表单中当前院校的专业列表
+const _majorOptionsCache = {}      // 缓存：universityId -> [{label, value}]
+
+// 院校下拉过滤函数
+const filterUniversityOption = (input, option) => {
+  const label = option?.label || ''
+  return String(label).toLowerCase().includes(input.toLowerCase())
+}
+
+async function loadUniversityOptions() {
+  try {
+    const res = await zhiyuanApi.adminListUniversities({ page: 1, size: 500 })
+    universityOptions.value = (res?.items || []).map(u => ({ label: u.name, value: u.id }))
+  } catch (e) {
+    console.error('加载院校选项失败', e)
+  }
+}
+
+async function loadMajorOptionsForSelect(universityId, targetRef) {
+  if (!universityId) {
+    targetRef.value = []
+    return
+  }
+  // 命中缓存
+  if (_majorOptionsCache[universityId]) {
+    targetRef.value = _majorOptionsCache[universityId]
+    return
+  }
+  try {
+    const res = await zhiyuanApi.adminListMajors({ university_id: universityId, page: 1, size: 200 })
+    const opts = (res?.items || []).map(m => ({ label: m.name, value: m.id }))
+    _majorOptionsCache[universityId] = opts
+    targetRef.value = opts
+  } catch (e) {
+    console.error('加载专业选项失败', e)
+    targetRef.value = []
+  }
+}
+
+function onScoreUniversityChange(universityId) {
+  scoreState.form.major_id = 0
+  loadMajorOptionsForSelect(universityId, scoreMajorOptions)
+}
+
+function onPlanUniversityChange(universityId) {
+  planState.form.major_id = 0
+  loadMajorOptionsForSelect(universityId, planMajorOptions)
+}
 
 // ========== 表格列定义 ==========
 const uniColumns = [
@@ -883,7 +985,7 @@ function openMajorModal(record) {
 
 async function submitMajor() {
   if (!majorState.form.university_id || majorState.form.university_id <= 0) {
-    message.warning('请填写有效的院校ID')
+    message.warning('请选择所属院校')
     return
   }
   if (!majorState.form.name || !majorState.form.name.trim()) {
@@ -962,11 +1064,17 @@ function openScoreModal(record) {
   scoreState.editing = record || null
   scoreState.form = record ? { ...defaultScoreForm(), ...record } : defaultScoreForm()
   scoreState.modalVisible = true
+  // 编辑时预加载该院校的专业列表
+  if (scoreState.form.university_id) {
+    loadMajorOptionsForSelect(scoreState.form.university_id, scoreMajorOptions)
+  } else {
+    scoreMajorOptions.value = []
+  }
 }
 
 async function submitScore() {
   if (!scoreState.form.university_id) {
-    message.warning('请填写院校ID')
+    message.warning('请选择院校')
     return
   }
   if (!scoreState.form.province) {
@@ -1065,8 +1173,13 @@ async function submitRule() {
 }
 
 async function deleteRule(record) {
-  // 后端规则接口仅提供 upsert，没有独立 DELETE；这里先提示。
-  message.warning('规则接口未提供独立删除，请通过 upsert 覆盖更新')
+  try {
+    await zhiyuanApi.adminDeleteRule(record.province, record.year)
+    message.success('删除成功')
+    loadRules()
+  } catch (e) {
+    message.error('删除失败：' + (e.message || '未知错误'))
+  }
 }
 
 // ========== 计划管理 ==========
@@ -1113,11 +1226,17 @@ function openPlanModal(record) {
   planState.editing = record || null
   planState.form = record ? { ...defaultPlanForm(), ...record } : defaultPlanForm()
   planState.modalVisible = true
+  // 编辑时预加载该院校的专业列表
+  if (planState.form.university_id) {
+    loadMajorOptionsForSelect(planState.form.university_id, planMajorOptions)
+  } else {
+    planMajorOptions.value = []
+  }
 }
 
 async function submitPlan() {
   if (!planState.form.university_id) {
-    message.warning('请填写院校ID')
+    message.warning('请选择院校')
     return
   }
   if (!planState.form.province) {
@@ -1156,6 +1275,67 @@ async function deletePlan(record) {
   }
 }
 
+// ========== Excel/CSV 文件导入 ==========
+const importState = reactive({
+  visible: false,
+  importing: false,
+  type: '',  // 'score' | 'major'
+  file: null,
+})
+
+const importFileInput = ref(null)
+
+function openImportDialog(type) {
+  importState.type = type
+  importState.file = null
+  importState.importing = false
+  if (importFileInput.value) {
+    importFileInput.value.value = ''
+  }
+  importFileInput.value?.click()
+}
+
+function onImportFileChange(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  importState.file = file
+  handleImport()
+}
+
+async function handleImport() {
+  if (!importState.file) {
+    message.warning('请先选择文件')
+    return
+  }
+  const formData = new FormData()
+  formData.append('file', importState.file)
+  importState.importing = true
+  try {
+    let res
+    if (importState.type === 'score') {
+      res = await zhiyuanApi.adminImportScoresFile(formData)
+    } else if (importState.type === 'major') {
+      res = await zhiyuanApi.adminImportMajorsFile(formData)
+    }
+    const count = res?.count || 0
+    message.success(`导入成功，共 ${count} 条记录`)
+    // 刷新对应列表
+    if (importState.type === 'score') {
+      loadScores()
+      // 院校选项可能也需要刷新（如果导入了新专业）
+      loadUniversityOptions()
+    } else if (importState.type === 'major') {
+      loadMajors()
+    }
+  } catch (e) {
+    const detail = e?.response?.data?.detail || e?.detail || e.message || '未知错误'
+    message.error('导入失败：' + detail)
+  } finally {
+    importState.importing = false
+    importState.file = null
+  }
+}
+
 // ========== 初始化 ==========
 const loadedTabs = new Set(['university'])
 
@@ -1170,6 +1350,7 @@ function onTabChange(key) {
 
 onMounted(() => {
   loadUniversities()
+  loadUniversityOptions()
 })
 </script>
 

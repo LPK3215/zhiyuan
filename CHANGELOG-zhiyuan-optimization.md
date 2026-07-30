@@ -718,3 +718,76 @@ WITH DISTINCT startNode(rel).name AS start, type(rel) AS relation, endNode(rel).
 | 10 | 前端单元测试 | ✅ | 63/63 通过 |
 | 11 | 主题切换功能 | ✅ | 午夜蓝背景 rgb(6,12,24) 正常 |
 | 12 | 控制台错误检查 | ✅ | 无 JS 报错 |
+
+---
+
+## 七、第七轮优化（2026-07-30 深夜续）
+
+### 7.1 🔴 管理端表单：院校/专业ID手动输入改为下拉选择（核心体验修复）
+
+**文件**: `ZhiyuanAdminView.vue`、`zhiyuan_api.js`
+
+**问题根因**:
+专业/分数/计划表单中 `university_id` 和 `major_id` 使用 `a-input-number` 手动输入数字，管理员需要记住院校ID，容易输错且无法关联校验。
+
+**修复内容**:
+- 专业表单：`university_id` 改为 `a-select`（可搜索），显示院校名称
+- 分数表单：`university_id` 改为 `a-select`（可搜索），选中院校后 `major_id` 自动级联加载该院校的专业列表
+- 计划表单：同分数表单的级联选择
+- 编辑模式预加载：打开编辑弹窗时自动加载已选院校的专业列表
+- 专业选项缓存：避免重复请求同一院校的专业列表
+
+### 7.2 🟢 Excel/CSV 文件批量导入功能
+
+**文件**: `zhiyuan_router.py`、`ZhiyuanAdminView.vue`、`zhiyuan_api.js`
+
+**新增接口**:
+- `POST /api/zhiyuan/admin/scores/import` - Excel/CSV 导入录取分数
+- `POST /api/zhiyuan/admin/majors/import` - Excel/CSV 导入专业
+- `POST /api/zhiyuan/admin/majors/batch` - JSON 批量导入专业
+- `POST /api/zhiyuan/admin/plans/batch` - JSON 批量导入招生计划
+
+**功能特点**:
+- 支持 `.xlsx`/`.xls`/`.csv` 三种格式
+- 中文列名自动映射（如"院校名称"→`university_name`）
+- 支持按院校名称自动匹配ID（无需手动填写ID）
+- CSV 编码自动探测（utf-8 → gbk 回退）
+- 文件大小限制 10MB，单次导入上限 500-1000 条
+- 外键存在性预校验，拒绝写入指向不存在院校的孤立记录
+- 安全类型转换（`_safe_int`/`_safe_float`），空值/NaN/非数字均回退默认值
+
+**前端交互**:
+- 专业管理和分数管理 filter-bar 添加"导入Excel"按钮
+- 点击按钮触发隐藏的 `<input type="file" accept=".xlsx,.xls,.csv">`
+- 导入中显示 loading 状态，成功后自动刷新列表
+
+### 7.3 🟢 规则删除接口
+
+**文件**: `zhiyuan_router.py`、`ZhiyuanAdminView.vue`
+
+**新增**:
+- `DELETE /api/zhiyuan/admin/rules/{province}?year=0` - 删除省份规则
+- `year=0` 时删除该省份所有年份的规则；指定年份则只删该年
+- 前端 `deleteRule` 函数从"提示无法删除"改为实际调用删除接口
+
+### 7.4 🟢 管理端院校列表分页上限提升
+
+**文件**: `zhiyuan_router.py`
+
+- 管理端院校列表接口 `size` 上限从 100 提升到 500
+- 支持前端一次性加载所有院校用于下拉选择
+
+---
+
+### 第七轮验证结果
+
+| # | 验证项 | 状态 | 结果 |
+|---|--------|------|------|
+| 1 | 院校列表 size=500 | ✅ | 返回 36 所院校 |
+| 2 | 规则删除接口（不存在省份） | ✅ | 返回 404 |
+| 3 | 后端单元测试 | ✅ | 41/41 通过 |
+| 4 | 前端单元测试 | ✅ | 63/63 通过 |
+| 5 | 专业表单院校下拉选择 | ✅ | a-select 组件，非 a-input-number |
+| 6 | 分数表单院校+专业下拉选择 | ✅ | 均为 a-select，级联加载 |
+| 7 | 导入Excel按钮显示 | ✅ | 专业管理和分数管理均显示 |
+| 8 | 控制台错误检查 | ✅ | 无 JS 报错 |

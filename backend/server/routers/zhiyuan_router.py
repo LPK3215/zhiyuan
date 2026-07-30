@@ -4,7 +4,7 @@
 管理端：/api/zhiyuan/admin/*  （数据增删改查）
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -409,7 +409,7 @@ class UniversityCreate(BaseModel):
 @admin.get("/universities")
 async def admin_list_universities(
     page: int = Query(default=1, ge=1),
-    size: int = Query(default=20, ge=1, le=100),
+    size: int = Query(default=20, ge=1, le=500),
     keyword: str = Query(default=""),
     db: AsyncSession = Depends(get_db),
     _admin=Depends(get_admin_user),
@@ -832,3 +832,337 @@ async def admin_delete_plan(
     await db.delete(plan)
     await db.commit()
     return {"status": "ok", "deleted": plan_id}
+
+
+# --- 补充：规则删除 / 专业批量导入 / 计划批量导入 ---
+
+
+@admin.delete("/rules/{province}")
+async def admin_delete_rule(
+    province: str,
+    year: int = Query(default=0, description="年份，0 表示删除该省份所有年份的规则"),
+    db: AsyncSession = Depends(get_db),
+    _admin=Depends(get_admin_user),
+):
+    """管理端：删除省份规则
+
+    year=0 时删除该省份的所有规则；否则只删除指定年份的规则。
+    """
+    stmt = select(ProvinceRule).where(ProvinceRule.province == province)
+    if year > 0:
+        stmt = stmt.where(ProvinceRule.year == year)
+    rows = (await db.execute(stmt)).scalars().all()
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"未找到 {province} 的规则数据")
+    for row in rows:
+        await db.delete(row)
+    await db.commit()
+    return {"status": "ok", "deleted": len(rows)}
+
+
+@admin.post("/majors/batch")
+async def admin_batch_create_majors(
+    body: list[MajorCreate],
+    db: AsyncSession = Depends(get_db),
+    _admin=Depends(get_admin_user),
+):
+    """管理端：批量导入专业（单次上限 500 条）"""
+    if len(body) > 500:
+        raise HTTPException(status_code=413, detail="单次批量导入不得超过 500 条")
+    if not body:
+        return {"status": "ok", "count": 0}
+
+    wanted_ids = {item.university_id for item in body}
+    existing_rows = (
+        await db.execute(select(University.id).where(University.id.in_(wanted_ids)))
+    ).all()
+    existing_ids = {r[0] for r in existing_rows}
+    missing_ids = sorted(wanted_ids - existing_ids)
+    if missing_ids:
+        raise HTTPException(
+            status_code=422,
+            detail=f"以下 university_id 不存在，已拒绝整批写入：{missing_ids}",
+        )
+
+    for item in body:
+        db.add(Major(**item.model_dump()))
+    await db.commit()
+    return {"status": "ok", "count": len(body)}
+
+
+@admin.post("/plans/batch")
+async def admin_batch_create_plans(
+    body: list[EnrollmentPlanCreate],
+    db: AsyncSession = Depends(get_db),
+    _admin=Depends(get_admin_user),
+):
+    """管理端：批量导入招生计划（单次上限 500 条）"""
+    if len(body) > 500:
+        raise HTTPException(status_code=413, detail="单次批量导入不得超过 500 条")
+    if not body:
+        return {"status": "ok", "count": 0}
+
+    wanted_ids = {item.university_id for item in body}
+    existing_rows = (
+        await db.execute(select(University.id).where(University.id.in_(wanted_ids)))
+    ).all()
+    existing_ids = {r[0] for r in existing_rows}
+    missing_ids = sorted(wanted_ids - existing_ids)
+    if missing_ids:
+        raise HTTPException(
+            status_code=422,
+            detail=f"以下 university_id 不存在，已拒绝整批写入：{missing_ids}",
+        )
+
+    for item in body:
+        db.add(EnrollmentPlan(**item.model_dump()))
+    await db.commit()
+    return {"status": "ok", "count": len(body)}
+
+
+# --- Excel/CSV 文件上传导入 ---
+
+
+def _parse_upload_file(content: bytes, filename: str):
+    """解析上传的 Excel/CSV 文件，返回 pandas DataFrame。
+
+    支持 .xlsx/.xls（openpyxl 引擎）和 .csv（utf-8/gbk 自动探测编码）。
+    """
+    import io
+    import pandas as pd
+
+    lower = (filename or "").lower()
+    if lower.endswith(".csv"):
+        # CSV 编码自动探测：先试 utf-8，失败回退 gbk
+        try:
+            return pd.read_csv(io.BytesIO(content), dtype=str)
+        except UnicodeDecodeError:
+            return pd.read_csv(io.BytesIO(content), dtype=str, encoding="gbk")
+    elif lower.endswith((".xlsx", ".xls")):
+        return pd.read_excel(io.BytesIO(content), dtype=str, engine="openpyxl")
+    else:
+        raise HTTPException(
+            status_code=415,
+            detail=f"不支持的文件格式：{filename}，仅支持 .xlsx/.xls/.csv",
+        )
+
+
+def _safe_int(val, default=0):
+    """安全转 int：空值/NaN/非数字 → default。"""
+    if val is None:
+        return default
+    s = str(val).strip()
+    if not s or s.lower() in ("nan", "none", ""):
+        return default
+    try:
+        return int(float(s))
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_float(val, default=0.0):
+    """安全转 float：空值/NaN/非数字 → default。"""
+    if val is None:
+        return default
+    s = str(val).strip()
+    if not s or s.lower() in ("nan", "none", ""):
+        return default
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return default
+
+
+@admin.post("/scores/import")
+async def admin_import_scores_file(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    _admin=Depends(get_admin_user),
+):
+    """管理端：通过 Excel/CSV 文件导入录取分数
+
+    要求列名（不区分大小写，支持中英文）：
+    院校名称/院校/university_name, 院校ID/university_id, 专业ID/major_id,
+    省份/province, 年份/year, 科类/subject_type, 批次/batch,
+    最低分/min_score, 最高分/max_score, 平均分/avg_score,
+    最低位次/min_rank, 计划数/plan_count
+
+    优先使用 university_id；若仅有 university_name，则按名称查找院校 ID。
+    """
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="文件大小不得超过 10MB")
+
+    df = _parse_upload_file(content, file.filename or "")
+
+    # 列名归一化：去空格、转小写
+    df.columns = [str(c).strip().lower() for c in df.columns]
+
+    # 列名映射（中文 -> 英文标准字段）
+    col_map = {
+        "院校名称": "university_name", "院校": "university_name", "university_name": "university_name",
+        "院校id": "university_id", "university_id": "university_id",
+        "专业id": "major_id", "major_id": "major_id",
+        "省份": "province", "province": "province",
+        "年份": "year", "year": "year",
+        "科类": "subject_type", "subject_type": "subject_type",
+        "批次": "batch", "batch": "batch",
+        "最低分": "min_score", "min_score": "min_score",
+        "最高分": "max_score", "max_score": "max_score",
+        "平均分": "avg_score", "avg_score": "avg_score",
+        "最低位次": "min_rank", "min_rank": "min_rank",
+        "计划数": "plan_count", "plan_count": "plan_count",
+    }
+    rename_dict = {}
+    for col in df.columns:
+        if col in col_map:
+            rename_dict[col] = col_map[col]
+    df = df.rename(columns=rename_dict)
+
+    # 必须有 university_id 或 university_name
+    if "university_id" not in df.columns and "university_name" not in df.columns:
+        raise HTTPException(
+            status_code=422,
+            detail="文件必须包含「院校ID」或「院校名称」列",
+        )
+    if "province" not in df.columns:
+        raise HTTPException(status_code=422, detail="文件必须包含「省份」列")
+    if "year" not in df.columns:
+        raise HTTPException(status_code=422, detail="文件必须包含「年份」列")
+
+    # 如果只有 university_name，批量查找 university_id
+    if "university_id" not in df.columns:
+        names = df["university_name"].dropna().unique().tolist()
+        rows = (
+            await db.execute(select(University.id, University.name).where(University.name.in_(names)))
+        ).all()
+        name_map = {r[1]: r[0] for r in rows}
+        df["university_id"] = df["university_name"].map(lambda n: name_map.get(str(n).strip(), 0))
+        unmatched = df[df["university_id"] == 0]
+        if len(unmatched) > 0:
+            missing_names = unmatched["university_name"].unique().tolist()[:10]
+            raise HTTPException(
+                status_code=422,
+                detail=f"以下院校名称未匹配到记录：{missing_names}，请先在院校管理中添加",
+            )
+
+    records = []
+    for _, row in df.iterrows():
+        uid = _safe_int(row.get("university_id"))
+        if uid <= 0:
+            continue
+        records.append(AdmissionScore(
+            university_id=uid,
+            major_id=_safe_int(row.get("major_id")),
+            province=str(row.get("province", "")).strip(),
+            year=_safe_int(row.get("year")) or 2025,
+            subject_type=str(row.get("subject_type", "")).strip(),
+            batch=str(row.get("batch", "本科一批")).strip() or "本科一批",
+            min_score=_safe_int(row.get("min_score")),
+            max_score=_safe_int(row.get("max_score")),
+            avg_score=_safe_int(row.get("avg_score")),
+            min_rank=_safe_int(row.get("min_rank")),
+            plan_count=_safe_int(row.get("plan_count")),
+        ))
+
+    if not records:
+        raise HTTPException(status_code=422, detail="文件中没有有效数据行")
+
+    if len(records) > 1000:
+        raise HTTPException(status_code=413, detail=f"单次导入不得超过 1000 条，当前 {len(records)} 条")
+
+    for rec in records:
+        db.add(rec)
+    await db.commit()
+    return {"status": "ok", "count": len(records), "file": file.filename}
+
+
+@admin.post("/majors/import")
+async def admin_import_majors_file(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    _admin=Depends(get_admin_user),
+):
+    """管理端：通过 Excel/CSV 文件导入专业
+
+    要求列名：院校名称/院校ID, 专业名称/name, 专业代码/code, 学位类型/degree,
+    学制/duration, 学科门类/subject_category, 选科要求/subject_requirement,
+    就业率/employment_rate, 平均薪资/avg_salary, 就业方向/career_directions,
+    是否重点/is_key, 专业简介/intro
+    """
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="文件大小不得超过 10MB")
+
+    df = _parse_upload_file(content, file.filename or "")
+    df.columns = [str(c).strip().lower() for c in df.columns]
+
+    col_map = {
+        "院校名称": "university_name", "院校": "university_name", "university_name": "university_name",
+        "院校id": "university_id", "university_id": "university_id",
+        "专业名称": "name", "name": "name",
+        "专业代码": "code", "code": "code",
+        "学位类型": "degree", "degree": "degree",
+        "学制": "duration", "duration": "duration",
+        "学科门类": "subject_category", "subject_category": "subject_category",
+        "选科要求": "subject_requirement", "subject_requirement": "subject_requirement",
+        "就业率": "employment_rate", "employment_rate": "employment_rate",
+        "平均薪资": "avg_salary", "avg_salary": "avg_salary",
+        "就业方向": "career_directions", "career_directions": "career_directions",
+        "是否重点": "is_key", "is_key": "is_key",
+        "专业简介": "intro", "intro": "intro",
+    }
+    rename_dict = {col: col_map[col] for col in df.columns if col in col_map}
+    df = df.rename(columns=rename_dict)
+
+    if "university_id" not in df.columns and "university_name" not in df.columns:
+        raise HTTPException(status_code=422, detail="文件必须包含「院校ID」或「院校名称」列")
+    if "name" not in df.columns:
+        raise HTTPException(status_code=422, detail="文件必须包含「专业名称」列")
+
+    if "university_id" not in df.columns:
+        names = df["university_name"].dropna().unique().tolist()
+        rows = (
+            await db.execute(select(University.id, University.name).where(University.name.in_(names)))
+        ).all()
+        name_map = {r[1]: r[0] for r in rows}
+        df["university_id"] = df["university_name"].map(lambda n: name_map.get(str(n).strip(), 0))
+        unmatched = df[df["university_id"] == 0]
+        if len(unmatched) > 0:
+            missing_names = unmatched["university_name"].unique().tolist()[:10]
+            raise HTTPException(
+                status_code=422,
+                detail=f"以下院校名称未匹配到记录：{missing_names}，请先在院校管理中添加",
+            )
+
+    records = []
+    for _, row in df.iterrows():
+        uid = _safe_int(row.get("university_id"))
+        if uid <= 0:
+            continue
+        is_key_val = str(row.get("is_key", "")).strip().lower()
+        records.append(Major(
+            university_id=uid,
+            name=str(row.get("name", "")).strip(),
+            code=str(row.get("code", "")).strip(),
+            degree=str(row.get("degree", "")).strip(),
+            duration=str(row.get("duration", "4年")).strip() or "4年",
+            subject_category=str(row.get("subject_category", "")).strip(),
+            subject_requirement=str(row.get("subject_requirement", "")).strip(),
+            intro=str(row.get("intro", "")).strip(),
+            employment_rate=_safe_float(row.get("employment_rate")),
+            avg_salary=_safe_float(row.get("avg_salary")),
+            career_directions=str(row.get("career_directions", "")).strip(),
+            is_key=is_key_val in ("true", "1", "yes", "是", "重点"),
+        ))
+
+    if not records:
+        raise HTTPException(status_code=422, detail="文件中没有有效数据行")
+
+    if len(records) > 500:
+        raise HTTPException(status_code=413, detail=f"单次导入不得超过 500 条，当前 {len(records)} 条")
+
+    for rec in records:
+        db.add(rec)
+    await db.commit()
+    return {"status": "ok", "count": len(records), "file": file.filename}

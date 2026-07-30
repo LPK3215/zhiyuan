@@ -146,4 +146,24 @@ apiGet(`/api/zhiyuan/subject-check${buildQueryString(params)}`),
   /** 删除计划 */
   adminDeletePlan: (id) =>
     apiAdminDelete(`/api/zhiyuan/admin/plans/${id}`),
+
+  /** 删除规则（year=0 删除该省份所有年份） */
+  adminDeleteRule: (province, year = 0) =>
+    apiAdminDelete(`/api/zhiyuan/admin/rules/${encodeURIComponent(province)}?year=${year}`),
+
+  /** 批量导入专业（JSON 数组） */
+  adminBatchCreateMajors: (data) =>
+    apiAdminPost('/api/zhiyuan/admin/majors/batch', data),
+
+  /** 批量导入计划（JSON 数组） */
+  adminBatchCreatePlans: (data) =>
+    apiAdminPost('/api/zhiyuan/admin/plans/batch', data),
+
+  /** Excel/CSV 文件导入分数 */
+  adminImportScoresFile: (formData) =>
+    apiAdminPost('/api/zhiyuan/admin/scores/import', formData),
+
+  /** Excel/CSV 文件导入专业 */
+  adminImportMajorsFile: (formData) =>
+    apiAdminPost('/api/zhiyuan/admin/majors/import', formData),
 }
