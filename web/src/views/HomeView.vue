@@ -189,7 +189,7 @@
               <Search :size="28" />
             </div>
             <h3 class="feature-title">院校专业库</h3>
-            <p class="feature-desc">浏览{{ stats.universities || '' }}所院校详情，筛选985/211/双一流，查看专业与历年分数</p>
+            <p class="feature-desc">浏览{{ stats?.universities || '' }}所院校详情，筛选985/211/双一流，查看专业与历年分数</p>
           </div>
 
           <div class="feature-card" @click="goToChat">
@@ -209,7 +209,7 @@
             <TrendingUp :size="22" class="highlight-icon" />
             <div>
               <h4 class="highlight-title">历年数据支撑</h4>
-              <p class="highlight-text">{{ stats.admission_scores || 0 }}条录取分数 + {{ stats.score_ranks || 0 }}条位次数据</p>
+              <p class="highlight-text">{{ stats?.admission_scores || 0 }}条录取分数 + {{ stats?.score_ranks || 0 }}条位次数据</p>
             </div>
           </div>
           <div class="highlight-item">
