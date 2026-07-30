@@ -12,7 +12,7 @@ import {
   validatePlanProfile,
   validateGraphEntity,
   buildGraphQueryParams,
-} from '../../../web/src/views/zhiyuan/logic.js'
+} from '../../src/views/zhiyuan/logic.js'
 
 // ===== levelColor =====
 

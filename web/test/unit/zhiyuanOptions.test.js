@@ -5,7 +5,7 @@ import {
   SUBJECT_TYPES,
   UNIVERSITY_LEVELS,
   UNIVERSITY_TYPES,
-} from '../../../web/src/constants/zhiyuanOptions.js'
+} from '../../src/constants/zhiyuanOptions.js'
 
 test('PROVINCES 为单一来源且覆盖两页面历史并集', () => {
   // 原 PlanView 与 UniversityBrowse 各自的省份并集应被 PROVINCES 完整覆盖

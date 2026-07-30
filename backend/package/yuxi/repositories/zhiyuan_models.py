@@ -4,6 +4,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     Float,
+    Index,
     Integer,
     String,
     Text,
@@ -130,6 +131,12 @@ class AdmissionScore(PlanScoreMixin, Base):
     """历年录取分数线"""
 
     __tablename__ = "zhiyuan_admission_scores"
+    __table_args__ = (
+        # 冲稳保推荐核心查询：WHERE province=? AND min_rank>0 AND major_id=0 GROUP BY university_id
+        Index("ix_admission_scores_recommend", "province", "major_id", "university_id"),
+        # 按院校+省份查历年分数
+        Index("ix_admission_scores_uni_prov", "university_id", "province", "year"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     min_score = Column(Integer, default=0)
@@ -158,6 +165,10 @@ class ScoreRank(Base):
     """一分一段表"""
 
     __tablename__ = "zhiyuan_score_ranks"
+    __table_args__ = (
+        # 一分一段查询：WHERE province=? AND year=? AND score=? AND subject_type IN (...)
+        Index("ix_score_ranks_lookup", "province", "year", "score", "subject_type"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     province = Column(String(50), nullable=False, index=True)
@@ -212,6 +223,10 @@ class EnrollmentPlan(PlanScoreMixin, Base):
     """招生计划表"""
 
     __tablename__ = "zhiyuan_enrollment_plans"
+    __table_args__ = (
+        # 按院校+省份查招生计划
+        Index("ix_enrollment_plans_uni_prov", "university_id", "province", "year"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     duration = Column(String(20), default="4年")

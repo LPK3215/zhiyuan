@@ -22,6 +22,10 @@ sys.modules["yuxi.utils"].logger = types.SimpleNamespace(error=lambda *a, **k: N
 _stub("yuxi.knowledge.runtime")
 _stub("yuxi.storage.postgres.manager")
 _stub("yuxi.repositories.zhiyuan_repository")
+# stub yuxi.storage.neo4j so tools can import get_shared_neo4j_connection / neo4j_read
+_neo4j_stub = _stub("yuxi.storage.neo4j")
+_neo4j_stub.get_shared_neo4j_connection = lambda: None
+_neo4j_stub.neo4j_read = lambda *a, **k: []
 
 
 def _load_tools():
@@ -45,80 +49,87 @@ _tools = _load_tools()
 
 
 @pytest.mark.unit
-def test_query_graph_empty_entity_rejected():
-    # 空实体名应在校验分支被拒（需先提供非空 retriever 以越过"服务未就绪"早返回）
-    runtime = sys.modules["yuxi.knowledge.runtime"]
+def test_query_graph_empty_entity_rejected(monkeypatch):
+    # 空实体名应在校验分支被拒（需先提供运行中的 Neo4j 连接以越过“服务未就绪”早返回）
+    class FakeConn:
+        def is_running(self):
+            return True
 
-    class FakeKB:
-        def get_retrievers(self):
-            return [object()]  # 非空，越过服务就绪检查
+        @property
+        def driver(self):
+            return object()
 
-    runtime.knowledge_base = FakeKB()
+    neo4j_module = sys.modules["yuxi.storage.neo4j"]
+    monkeypatch.setattr(neo4j_module, "get_shared_neo4j_connection", lambda: FakeConn())
 
     async def run():
         return await _tools.query_graph("", "has_major", 2)
 
     import asyncio
 
-    result = asyncio.get_event_loop().run_until_complete(run())
+    result = asyncio.run(run())
     assert "不能为空" in result
     assert "服务未就绪" not in result
 
 
 @pytest.mark.unit
-def test_query_graph_overlong_entity_rejected():
-    runtime = sys.modules["yuxi.knowledge.runtime"]
+def test_query_graph_overlong_entity_rejected(monkeypatch):
+    class FakeConn:
+        def is_running(self):
+            return True
 
-    class FakeKB:
-        def get_retrievers(self):
-            return [object()]
+        @property
+        def driver(self):
+            return object()
 
-    runtime.knowledge_base = FakeKB()
+    neo4j_module = sys.modules["yuxi.storage.neo4j"]
+    monkeypatch.setattr(neo4j_module, "get_shared_neo4j_connection", lambda: FakeConn())
 
     async def run():
         return await _tools.query_graph("x" * 101, "has_major", 2)
 
     import asyncio
 
-    result = asyncio.get_event_loop().run_until_complete(run())
+    result = asyncio.run(run())
     assert "过长" in result
 
 
 @pytest.mark.unit
 def test_query_graph_depth_clamped(monkeypatch):
     """depth 超出 [1,4] 应被钳制；用 spy 捕获最终传入的 Cypher 验证 *1..4。"""
-    runtime = sys.modules["yuxi.knowledge.runtime"]
-
     captured = {}
 
-    class FakeGraph:
-        async def query(self, cypher, params):
-            captured["cypher"] = cypher
-            captured["params"] = params
-            return []
-
-    class FakeRetriever:
-        pass
-
-    class FakeKB:
-        def get_retrievers(self):
-            return [FakeRetriever()]
+    # Mock Neo4j connection manager to avoid real DB dependency
+    class FakeConn:
+        def is_running(self):
+            return True
 
         @property
-        def graph(self):
-            return FakeGraph()
+        def driver(self):
+            return object()
 
-    runtime.knowledge_base = FakeKB()
+    def fake_neo4j_read(driver, cypher, **kwargs):
+        captured["cypher"] = cypher
+        captured["params"] = kwargs
+        return []
+
+    # Patch get_shared_neo4j_connection and neo4j_read in the tools module
+    neo4j_module = sys.modules["yuxi.storage.neo4j"]
+    monkeypatch.setattr(neo4j_module, "get_shared_neo4j_connection", lambda: FakeConn())
+    monkeypatch.setattr(neo4j_module, "neo4j_read", fake_neo4j_read)
 
     async def run():
         return await _tools.query_graph("计算机科学与技术", "has_major", 100)
 
     import asyncio
 
-    result = asyncio.get_event_loop().run_until_complete(run())
+    result = asyncio.run(run())
     # 深度被钳制为 4：Cypher 应包含 *1..4 而非 *1..100
     assert "*1..4" in captured["cypher"]
     assert "*1..100" not in captured["cypher"]
+    # Cypher 应使用正确的变长路径语法 [r*1..4] 或 [r:RELATION*1..4]
+    assert "[r" in captured["cypher"]
+    assert "]" in captured["cypher"]
     # 实体名被 trim 后传入参数
     assert captured["params"]["start_entity"] == "计算机科学与技术"
 
@@ -140,7 +151,7 @@ def test_generate_plan_rejects_nonnumeric_rank():
     import asyncio
     import json as _json
 
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         _tools.generate_application_plan(_json.dumps({"rank": "abc", "province": "河南"}))
     )
     assert "整数" in result
@@ -153,7 +164,7 @@ def test_generate_plan_rejects_nonpositive_rank():
     import asyncio
     import json as _json
 
-    result = asyncio.get_event_loop().run_until_complete(
+    result = asyncio.run(
         _tools.generate_application_plan(_json.dumps({"rank": -3, "province": "河南"}))
     )
     assert "正整数" in result
@@ -205,7 +216,7 @@ def test_resolve_university_uses_cache():
         r2 = await _tools._resolve_university(repo, "郑州大学")
         return r1, r2
 
-    r1, r2 = asyncio.get_event_loop().run_until_complete(run())
+    r1, r2 = asyncio.run(run())
     assert r1 == r2 == {"id": 42, "name": "郑州大学"}
     assert calls["n"] == 1  # 第二次命中缓存
     _tools._uni_cache.clear()

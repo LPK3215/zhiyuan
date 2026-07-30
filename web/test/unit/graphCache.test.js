@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createGraphCache } from '../../../web/src/constants/graphCache.js'
+import { createGraphCache } from '../../src/constants/graphCache.js'
 
 test('makeKey 包含全部查询维度', () => {
   const cache = createGraphCache()

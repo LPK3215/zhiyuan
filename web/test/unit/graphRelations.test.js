@@ -4,7 +4,7 @@ import {
   GRAPH_RELATION_OPTIONS,
   GRAPH_RELATION_TOKENS,
   isRelationToken,
-} from '../../../web/src/constants/graphRelations.js'
+} from '../../src/constants/graphRelations.js'
 
 test('GRAPH_RELATION_OPTIONS 含全部后端白名单 token', () => {
   const values = GRAPH_RELATION_OPTIONS.map((o) => o.value)

@@ -4,7 +4,7 @@ import {
   buildUniversityDetailUrl,
   buildProvinceRuleUrl,
   buildQueryGraphParams,
-} from '../../../web/src/apis/zhiyuanUrl.js'
+} from '../../src/apis/zhiyuanUrl.js'
 
 // ===== 院校详情 URL =====
 

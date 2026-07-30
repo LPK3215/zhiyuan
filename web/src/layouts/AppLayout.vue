@@ -11,7 +11,10 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   MessageCirclePlus,
-  Search
+  Search,
+  Network,
+  MapPin,
+  FileText
 } from 'lucide-vue-next'
 
 import { useConfigStore } from '@/stores/config'
@@ -136,6 +139,31 @@ const mainList = computed(() => {
     activePaths: ['/extensions'],
     icon: LibraryBig,
     activeIcon: LibraryBig
+  })
+
+  // 智愿用户页面：所有登录用户可见
+  items.push({
+    name: '院校库',
+    path: '/zhiyuan/universities',
+    activePaths: ['/zhiyuan/universities'],
+    icon: MapPin,
+    activeIcon: MapPin
+  })
+
+  items.push({
+    name: '志愿方案',
+    path: '/zhiyuan/plan',
+    activePaths: ['/zhiyuan/plan'],
+    icon: FileText,
+    activeIcon: FileText
+  })
+
+  items.push({
+    name: '知识图谱',
+    path: '/zhiyuan/graph',
+    activePaths: ['/zhiyuan/graph'],
+    icon: Network,
+    activeIcon: Network
   })
 
   if (userStore.isAdmin) {

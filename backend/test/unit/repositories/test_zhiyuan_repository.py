@@ -216,36 +216,40 @@ async def test_get_nearest_rank(seeded_repo):
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_recommend_by_rank(seeded_repo):
-    # 位次5000 → 武大是稳（avg~4900），清华是冲（avg~190），郑大是保（avg~14800）
     # 分类规则：ratio = user_rank / avg_rank
-    #   ratio > 1.25 → rush（冲）；0.833 <= ratio <= 1.25 → stable（稳）；ratio < 0.833 → safe（保）
-    result = await seeded_repo.recommend_by_rank(5000, "河南", "理科", "all")
-    assert "rush" in result
-    assert "stable" in result
-    assert "safe" in result
+    #   1.0 < ratio <= 1.3 → rush（冲）；0.75 <= ratio <= 1.0 → stable（稳）；0.4 <= ratio < 0.75 → safe（保）
+    #   ratio > 1.3 或 ratio < 0.4 → 过滤（差距过大不现实）
+    # 种子数据 avg_rank：清华~190，武大~4900，郑大~14767
 
     qinghua = await seeded_repo.get_university_by_name("清华")
     zhengda = await seeded_repo.get_university_by_name("郑州大学")
     wuda = await seeded_repo.get_university_by_name("武汉大学")
 
-    # 清华 ratio≈5000/190≈26 > 1.25 → 冲
+    # rank=5000：武大 ratio≈1.02 → rush；清华 ratio≈26 > 1.3 过滤；郑大 ratio≈0.34 < 0.4 过滤
+    result = await seeded_repo.recommend_by_rank(5000, "河南", "理科", "all")
+    assert "rush" in result and "stable" in result and "safe" in result
+
     rush_ids = [item["university_id"] for item in result["rush"]]
-    assert qinghua["id"] in rush_ids
-    assert qinghua["id"] not in result["stable"]
-    assert qinghua["id"] not in result["safe"]
+    assert wuda["id"] in rush_ids
+    # 清华和郑大因差距过大被过滤，不在任何档
+    all_ids = set(rush_ids) | {i["university_id"] for i in result["stable"]} | {i["university_id"] for i in result["safe"]}
+    assert qinghua["id"] not in all_ids
+    assert zhengda["id"] not in all_ids
 
-    # 郑大 ratio≈5000/14800≈0.34 < 0.833 → 保
-    safe_ids = [item["university_id"] for item in result["safe"]]
-    assert zhengda["id"] in safe_ids
-
-    # 武大 ratio≈5000/4900≈1.02 ∈ [0.833,1.25) → 稳
-    stable_ids = [item["university_id"] for item in result["stable"]]
+    # rank=4900：武大 ratio≈1.0 → stable
+    result_stable = await seeded_repo.recommend_by_rank(4900, "河南", "理科", "all")
+    stable_ids = [item["university_id"] for item in result_stable["stable"]]
     assert wuda["id"] in stable_ids
 
-    # 单档策略：strategy="stable" 只返回稳档
-    stable_only = await seeded_repo.recommend_by_rank(5000, "河南", "理科", "stable")
-    assert set(stable_only.keys()) == {"stable"}
-    assert wuda["id"] in [i["university_id"] for i in stable_only["stable"]]
+    # rank=3000：武大 ratio≈0.61 → safe
+    result_safe = await seeded_repo.recommend_by_rank(3000, "河南", "理科", "all")
+    safe_ids = [item["university_id"] for item in result_safe["safe"]]
+    assert wuda["id"] in safe_ids
+
+    # 单档策略：strategy="rush" 只返回冲档
+    rush_only = await seeded_repo.recommend_by_rank(5000, "河南", "理科", "rush")
+    assert set(rush_only.keys()) == {"rush"}
+    assert wuda["id"] in [i["university_id"] for i in rush_only["rush"]]
 
     # 每个结果项字段完整
     for cat in ("rush", "stable", "safe"):

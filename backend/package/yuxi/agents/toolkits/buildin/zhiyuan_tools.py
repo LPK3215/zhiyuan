@@ -104,17 +104,19 @@ class GetScoreRankInput(BaseModel):
 
     score: int = Field(description="高考分数")
     province: str = Field(description="省份，如'河南'")
-    year: int = Field(description="年份，如2025")
+    year: int = Field(default=0, description="年份，0表示查最近可用年份")
     subject_type: str = Field(default="", description="科类：理科/文科/物理类/历史类")
 
 
 @tool(category="buildin", tags=["志愿填报"], display_name="查位次", args_schema=GetScoreRankInput)
-async def get_score_rank(score: int, province: str, year: int, subject_type: str = "") -> str:
+async def get_score_rank(score: int, province: str, year: int = 0, subject_type: str = "") -> str:
     """根据高考分数查询一分一段表，获取对应位次（全省排名）。
 
     位次是志愿填报最核心的参考指标，比分数更稳定。当用户告知分数后，必须调用此工具获取位次。
     """
     async def _query(repo):
+        if year <= 0:
+            year = await repo.get_latest_rank_year(province) or 0
         result = await repo.get_rank_by_score(score, province, year, subject_type)
         if not result:
             # 尝试找最近的
@@ -235,6 +237,7 @@ class QueryGraphInput(BaseModel):
 
 
 # 图谱关系类型白名单（防止 relation_type 被注入到 Cypher 模式）
+# 同时包含英文（知识库图谱）和中文（智愿种子图谱）关系名
 _GRAPH_RELATION_WHITELIST = {
     "belongs_to",
     "has_major",
@@ -243,6 +246,11 @@ _GRAPH_RELATION_WHITELIST = {
     "requires",
     "offers",
     "adjacent_to",
+    # 智愿种子图谱使用的中文关系名
+    "开设",
+    "属于",
+    "对应职业",
+    "前置学科",
 }
 
 
@@ -253,12 +261,12 @@ async def query_graph(start_entity: str, relation_type: str = "", depth: int = 2
     当用户想了解某个专业对应什么职业、某校开了哪些专业、某学科的前置知识等关系时使用。
     """
     try:
-        from yuxi.knowledge.runtime import knowledge_base
+        # 直接使用 Neo4j 连接，不依赖 knowledge_base.graph（后者仅在知识库构建后初始化）
+        from yuxi.storage.neo4j import get_shared_neo4j_connection, neo4j_read
 
-        # 使用Yuxi已有的Neo4j图谱查询能力
-        retrievers = knowledge_base.get_retrievers()
-        if not retrievers:
-            return "知识图谱服务未就绪"
+        conn = get_shared_neo4j_connection()
+        if not conn.is_running():
+            return "图谱服务未就绪（需要Neo4j服务）"
 
         # 输入校验：实体名必须非空且长度受限，避免空串/超大串爆破图库
         clean_entity = (start_entity or "").strip()
@@ -275,24 +283,37 @@ async def query_graph(start_entity: str, relation_type: str = "", depth: int = 2
         # 安全：relation_type 仅在白名单内才拼入 Cypher 关系模式，避免 Cypher 注入。
         # start_entity 通过参数化 $start_entity 传入，杜绝字符串插值注入。
         safe_rel = relation_type if relation_type in _GRAPH_RELATION_WHITELIST else ""
-        rel_filter = f"-[r:{safe_rel}]-" if safe_rel else "-[r]-"
-        cypher = (
-            f"MATCH path = (n {{name: $start_entity}}){rel_filter}*1..{safe_depth}(m) "
-            f"RETURN n.name AS start, type(r) AS relation, m.name AS target LIMIT 50"
+        if safe_depth == 1:
+            # depth=1: direct relationships, r is a single relationship
+            # 使用 startNode/endNode 确保关系方向正确
+            rel_pattern = f"-[r:{safe_rel}]-" if safe_rel else "-[r]-"
+            cypher = (
+                f"MATCH (n {{name: $start_entity}}){rel_pattern}(m) "
+                f"RETURN startNode(r).name AS start, type(r) AS relation, endNode(r).name AS target LIMIT 50"
+            )
+        else:
+            # depth>1: variable-length path, UNWIND 展开每条关系
+            # 必须使用 startNode(rel)/endNode(rel) 获取每条关系的实际端点
+            rel_type_filter = f":{safe_rel}" if safe_rel else ""
+            cypher = (
+                f"MATCH path = (n {{name: $start_entity}})-[r{rel_type_filter}*1..{safe_depth}]-(m) "
+                f"UNWIND relationships(path) AS rel "
+                f"WITH DISTINCT startNode(rel).name AS start, type(rel) AS relation, endNode(rel).name AS target "
+                f"RETURN start, relation, target LIMIT 50"
+            )
+
+        # 使用同步 Neo4j 驱动在线程中执行查询，避免阻塞事件循环
+        import asyncio as _asyncio
+
+        results = await _asyncio.to_thread(
+            neo4j_read, conn.driver, cypher, start_entity=clean_entity
         )
-
-        # 通过Yuxi图谱接口执行
-        graph_db = getattr(knowledge_base, "graph", None)
-        if graph_db is None:
-            return "图谱模块未启用（需要Neo4j服务）"
-
-        results = await graph_db.query(cypher, {"start_entity": clean_entity})
         if not results:
             return f"未找到与 '{clean_entity}' 相关的图谱关系"
         return json.dumps(results, ensure_ascii=False, indent=2)
 
     except Exception as e:
-        logger.error(f"图谱查询失败: {e}")
+        logger.error(f"[zhiyuan_tool] 图谱查询失败: {e}")
         return f"图谱查询失败: {str(e)}"
 
 

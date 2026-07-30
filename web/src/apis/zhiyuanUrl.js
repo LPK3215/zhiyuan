@@ -36,8 +36,17 @@ export function buildProvinceRuleUrl(province) {
 /**
  * 将前端图谱查询参数映射为后端所需参数，并校验关系 token。
  * relation 为空串表示「全部关系」（合法）；非空必须为白名单 token。
+ *
+ * 兼容两种调用方式：
+ *   1. 直接传 { entity, relation, depth }（旧接口）
+ *   2. 传 logic.js 的 buildGraphQueryParams 产出的 { start_entity, relation_type, depth }
  */
-export function buildQueryGraphParams({ entity, relation = '', depth = 2 } = {}) {
+export function buildQueryGraphParams(params = {}) {
+  // 统一参数名：兼容 entity/relation 和 start_entity/relation_type
+  const entity = params.entity ?? params.start_entity
+  const relation = params.relation ?? params.relation_type ?? ''
+  const depth = params.depth ?? 2
+
   if (!isRelationToken(relation)) {
     throw new Error(`非法的图谱关系类型: ${relation}`)
   }

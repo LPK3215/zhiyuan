@@ -125,6 +125,7 @@
             placeholder="省份"
             style="width: 140px"
             allow-clear
+            show-search
           >
             <a-select-option v-for="p in provinces" :key="p" :value="p">{{ p }}</a-select-option>
           </a-select>
@@ -227,6 +228,7 @@
             placeholder="省份"
             style="width: 140px"
             allow-clear
+            show-search
           >
             <a-select-option v-for="p in provinces" :key="p" :value="p">{{ p }}</a-select-option>
           </a-select>
@@ -236,11 +238,11 @@
             :min="0"
             style="width: 120px"
           />
-          <a-button type="primary" @click="loadPlans">查询</a-button>
+          <a-button type="primary" @click="onPlanSearch">查询</a-button>
           <a-button type="primary" @click="openPlanModal(null)">新增计划</a-button>
         </div>
         <a-table
-          :dataSource="planPagedList"
+          :dataSource="planState.list"
           :columns="planColumns"
           :loading="planState.loading"
           rowKey="id"
@@ -265,11 +267,11 @@
         <div class="pagination-bar">
           <a-pagination
             v-model:current="planState.page"
-            :pageSize="planState.size"
-            :total="planState.list.length"
+            v-model:pageSize="planState.size"
+            :total="planState.total"
             :show-total="(t) => `共 ${t} 条`"
             show-size-changer
-            @change="(p, s) => { planState.page = p; planState.size = s }"
+            @change="loadPlans"
           />
         </div>
       </a-tab-pane>
@@ -677,6 +679,7 @@ const uniColumns = [
 
 const majorColumns = [
   { title: '名称', dataIndex: 'name', key: 'name', width: 180, ellipsis: true },
+  { title: '院校', dataIndex: 'university_name', key: 'university_name', width: 150, ellipsis: true },
   { title: '院校ID', dataIndex: 'university_id', key: 'university_id', width: 90, align: 'right' },
   { title: '代码', dataIndex: 'code', key: 'code', width: 90 },
   { title: '学制', dataIndex: 'duration', key: 'duration', width: 80 },
@@ -687,6 +690,7 @@ const majorColumns = [
 ]
 
 const scoreColumns = [
+  { title: '院校', dataIndex: 'university_name', key: 'university_name', width: 150, ellipsis: true },
   { title: '院校ID', dataIndex: 'university_id', key: 'university_id', width: 90, align: 'right' },
   { title: '省份', dataIndex: 'province', key: 'province', width: 80 },
   { title: '年份', dataIndex: 'year', key: 'year', width: 80, align: 'right' },
@@ -709,6 +713,7 @@ const ruleColumns = [
 ]
 
 const planColumns = [
+  { title: '院校', dataIndex: 'university_name', key: 'university_name', width: 150, ellipsis: true },
   { title: '院校ID', dataIndex: 'university_id', key: 'university_id', width: 90, align: 'right' },
   { title: '省份', dataIndex: 'province', key: 'province', width: 80 },
   { title: '年份', dataIndex: 'year', key: 'year', width: 80, align: 'right' },
@@ -1021,7 +1026,7 @@ async function loadRules() {
   ruleState.loading = true
   try {
     const res = await zhiyuanApi.adminListRules()
-    const data = Array.isArray(res) ? res : (res?.data || [])
+    const data = Array.isArray(res) ? res : (res?.items || res?.data || [])
     ruleState.list = data
     ruleState.page = 1
   } catch (e) {
@@ -1068,6 +1073,7 @@ async function deleteRule(record) {
 const planState = reactive({
   loading: false,
   list: [],
+  total: 0,
   page: 1,
   size: 20,
   universityId: undefined,
@@ -1079,11 +1085,6 @@ const planState = reactive({
   submitting: false,
 })
 
-const planPagedList = computed(() => {
-  const start = (planState.page - 1) * planState.size
-  return planState.list.slice(start, start + planState.size)
-})
-
 async function loadPlans() {
   planState.loading = true
   try {
@@ -1091,15 +1092,21 @@ async function loadPlans() {
       university_id: planState.universityId,
       province: planState.province,
       year: planState.year,
+      page: planState.page,
+      size: planState.size,
     })
-    const data = Array.isArray(res) ? res : (res?.data || [])
-    planState.list = data
-    planState.page = 1
+    planState.list = res?.items || []
+    planState.total = res?.total || 0
   } catch (e) {
     message.error('加载计划失败：' + (e.message || '未知错误'))
   } finally {
     planState.loading = false
   }
+}
+
+function onPlanSearch() {
+  planState.page = 1
+  loadPlans()
 }
 
 function openPlanModal(record) {
@@ -1182,7 +1189,7 @@ onMounted(() => {
   }
 
   .subtitle {
-    color: #666;
+    color: var(--gray-600);
     font-size: 14px;
     margin: 0;
   }
@@ -1196,7 +1203,7 @@ onMounted(() => {
   align-items: center;
 
   .hint-text {
-    color: #999;
+    color: var(--gray-500);
     font-size: 13px;
     margin-right: auto;
   }

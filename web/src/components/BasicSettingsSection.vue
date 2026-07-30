@@ -90,7 +90,7 @@
     <div v-if="userStore.isAdmin" class="section-title">服务链接</div>
     <div v-if="userStore.isAdmin">
       <p class="section-description">
-        快速访问系统相关的外部服务，需要将 localhost 替换为实际的 IP 地址。
+        快速访问系统相关的外部服务。
       </p>
       <div class="services-grid">
         <div class="service-link-card">
@@ -101,7 +101,7 @@
           <a-button
             type="default"
             class="lucide-icon-btn"
-            @click="openLink('http://localhost:7474/')"
+            @click="openLink(serviceUrl(7474))"
             :icon="h(Globe, { size: 18 })"
           >
             访问
@@ -116,7 +116,7 @@
           <a-button
             type="default"
             class="lucide-icon-btn"
-            @click="openLink('http://localhost:5050/docs')"
+            @click="openLink(serviceUrl(5050, '/docs'))"
             :icon="h(Globe, { size: 18 })"
           >
             访问
@@ -131,7 +131,7 @@
           <a-button
             type="default"
             class="lucide-icon-btn"
-            @click="openLink('http://localhost:9001')"
+            @click="openLink(serviceUrl(9001))"
             :icon="h(Globe, { size: 18 })"
           >
             访问
@@ -146,7 +146,7 @@
           <a-button
             type="default"
             class="lucide-icon-btn"
-            @click="openLink('http://localhost:9091/webui/')"
+            @click="openLink(serviceUrl(9091, '/webui/'))"
             :icon="h(Globe, { size: 18 })"
           >
             访问
@@ -193,6 +193,11 @@ const handleContentGuardModelSelect = (spec) => {
 
 const openLink = (url) => {
   window.open(url, '_blank')
+}
+
+const serviceUrl = (port, path = '/') => {
+  const host = window.location.hostname
+  return `http://${host}:${port}${path}`
 }
 </script>
 

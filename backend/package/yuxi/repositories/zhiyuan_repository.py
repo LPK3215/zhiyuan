@@ -197,15 +197,39 @@ class ZhiyuanRepository:
             conditions.append(AdmissionScore.year >= year - years_back + 1)
             conditions.append(AdmissionScore.year <= year)
 
-        stmt = select(AdmissionScore)
+        # LEFT JOIN 院校表和专业表，使结果直接包含 university_name / major_name，
+        # 避免 Agent 工具和前端需要二次查询补全名称。
+        stmt = (
+            select(
+                AdmissionScore,
+                University.name.label("university_name"),
+                Major.name.label("major_name"),
+            )
+            .outerjoin(University, AdmissionScore.university_id == University.id)
+            .outerjoin(Major, AdmissionScore.major_id == Major.id)
+        )
         if conditions:
             stmt = stmt.where(and_(*conditions))
         stmt = stmt.order_by(desc(AdmissionScore.year)).limit(50)
 
         result = await self.db.execute(stmt)
-        return [row.to_dict() for row in result.scalars().all()]
+        rows = []
+        for row in result.all():
+            score = row[0]
+            d = score.to_dict()
+            d["university_name"] = row[1] or ""
+            d["major_name"] = row[2] or ""
+            rows.append(d)
+        return rows
 
     # ===== 一分一段 =====
+
+    async def get_latest_rank_year(self, province: str = "") -> int | None:
+        """查询一分一段表中最近可用年份（供 year=0 时自动解析）。"""
+        stmt = select(func.max(ScoreRank.year))
+        if province:
+            stmt = stmt.where(ScoreRank.province == province)
+        return (await self.db.execute(stmt)).scalar()
 
     async def get_rank_by_score(
         self, score: int, province: str, year: int, subject_type: str = ""
@@ -256,9 +280,15 @@ class ZhiyuanRepository:
         """基于位次的冲稳保推荐
 
         策略：用历年录取最低位次与用户位次对比
-        - 冲：院校最低位次 < 用户位次 * 0.8（即排名比你高20%以上）
-        - 稳：院校最低位次 在用户位次 * 0.8 ~ 1.2 之间
-        - 保：院校最低位次 > 用户位次 * 1.2
+        ratio = 用户位次 / 院校平均位次
+        - ratio > 1：用户位次低于院校（数字大=排名靠后=分数低），考不上
+        - ratio < 1：用户位次高于院校，能考上
+
+        分类区间（与 calculate_probability 概率模型对齐）：
+        - 冲：1.0 < ratio <= 1.3（用户略低于院校，概率 35-55%，有希望但难）
+        - 稳：0.75 <= ratio <= 1.0（匹配区间，概率 70-85%）
+        - 保：0.4 <= ratio < 0.75（用户高于院校，概率 85-95%，安全保底）
+        - ratio > 1.3 或 ratio < 0.4：过滤（差距过大不现实 / 院校太差浪费志愿）
         """
         # 防御：非法位次（<=0）无法参与比值计算，直接返回空档
         if rank <= 0:
@@ -294,23 +324,20 @@ class ZhiyuanRepository:
             avg_rank = int(row.avg_rank)
             if avg_rank == 0:
                 continue
-            ratio = rank / avg_rank  # >1 表示用户排名靠后（分数低）
-            # 按注释口径（用户位次 vs 院校最低位次）：
-            #   冲：院校最低位次 < 用户位次*0.8  →  ratio = 用户/院校 > 1.25
-            #   保：院校最低位次 > 用户位次*1.2  →  ratio < 0.833
-            #   稳：介于两者之间
-            if ratio > 1.25:
-                # 用户位次不如该校 → 冲
+            ratio = rank / avg_rank
+            if 1.0 < ratio <= 1.3:
+                # 用户位次略低于院校 → 冲（有希望但难）
                 rush.append({"university_id": row.university_id, "avg_rank": avg_rank, "ratio": round(ratio, 2)})
-            elif ratio >= 0.833:
+            elif 0.75 <= ratio <= 1.0:
                 # 匹配区间 → 稳
                 stable.append({"university_id": row.university_id, "avg_rank": avg_rank, "ratio": round(ratio, 2)})
-            else:
-                # 用户位次远优于该校 → 保底
+            elif 0.4 <= ratio < 0.75:
+                # 用户位次高于院校 → 保底
                 safe.append({"university_id": row.university_id, "avg_rank": avg_rank, "ratio": round(ratio, 2)})
+            # ratio > 1.3 或 ratio < 0.4：差距过大，过滤
 
-        # 按ratio排序（冲：ratio大的优先；稳：接近1的优先；保：ratio小的优先）
-        rush.sort(key=lambda x: -x["ratio"])
+        # 排序：冲按 ratio 升序（接近1的优先，最有希望）；稳按接近1；保按 ratio 降序（接近0.75的优先）
+        rush.sort(key=lambda x: x["ratio"])
         stable.sort(key=lambda x: abs(x["ratio"] - 1.0))
         safe.sort(key=lambda x: -x["ratio"])
 
@@ -585,7 +612,9 @@ class ZhiyuanRepository:
 
         # 回退：当 EnrollmentPlan.major_id=0（不区分专业的招生计划）导致 JOIN Major 查不到时，
         # 直接从 Major 表取该院校的专业作为兜底，避免 /plan 的 majors 恒为空。
-        empty_uids = [uid for uid in university_ids if not grouped.get(uid)]
+        # 注意：仅对有招生计划（在 latest_by_uni 中）但 JOIN 结果为空的院校回退；
+        # 完全没有招生计划的院校应返回空列表（与单校版 get_university_majors 行为一致）。
+        empty_uids = [uid for uid in university_ids if uid in latest_by_uni and not grouped.get(uid)]
         if empty_uids:
             fallback_rows = (
                 await self.db.execute(

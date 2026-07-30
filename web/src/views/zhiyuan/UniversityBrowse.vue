@@ -77,11 +77,15 @@
           <a-descriptions-item label="重点学科" :span="2">{{ detailData.key_disciplines }}</a-descriptions-item>
         </a-descriptions>
 
-        <h4 style="margin: 16px 0 8px">开设专业</h4>
+        <h4 style="margin: 16px 0 8px">
+          开设专业
+          <a-spin v-if="detailLoading" size="small" style="margin-left: 8px" />
+        </h4>
         <a-table
           :dataSource="detailMajors"
           :columns="majorColumns"
           :pagination="false"
+          :loading="detailLoading"
           size="small"
           rowKey="id"
         />
@@ -112,6 +116,7 @@ const loading = ref(false)
 const detailVisible = ref(false)
 const detailData = ref(null)
 const detailMajors = ref([])
+const detailLoading = ref(false)
 
 const provinces = PROVINCES
 const levels = UNIVERSITY_LEVELS
@@ -140,12 +145,16 @@ async function handleSearch() {
 
 async function showDetail(uni) {
   detailData.value = uni
+  detailMajors.value = []
   detailVisible.value = true
+  detailLoading.value = true
   try {
     const res = await zhiyuanApi.getUniversityDetail(uni.id)
     detailMajors.value = resolveMajors(res)
   } catch (e) {
     detailMajors.value = []
+  } finally {
+    detailLoading.value = false
   }
 }
 
@@ -170,7 +179,7 @@ onMounted(() => {
   }
 
   .subtitle {
-    color: #666;
+    color: var(--gray-600);
     font-size: 14px;
     margin: 0;
   }
@@ -190,14 +199,20 @@ onMounted(() => {
 }
 
 .uni-card {
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--gray-150);
   border-radius: 8px;
   padding: 16px;
   cursor: pointer;
-  transition: box-shadow 0.2s;
+  background: var(--gray-0);
+  transition:
+    box-shadow 0.2s ease,
+    border-color 0.2s ease,
+    transform 0.15s ease;
 
   &:hover {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    border-color: var(--main-200);
+    box-shadow: 0 4px 12px var(--shadow-2);
+    transform: translateY(-2px);
   }
 
   .uni-card-header {
@@ -220,7 +235,7 @@ onMounted(() => {
 
     .uni-meta {
       font-size: 13px;
-      color: #666;
+      color: var(--gray-600);
     }
   }
 
@@ -228,7 +243,7 @@ onMounted(() => {
     display: flex;
     gap: 16px;
     font-size: 12px;
-    color: #999;
+    color: var(--gray-500);
   }
 }
 </style>

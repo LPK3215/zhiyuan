@@ -7,14 +7,25 @@
 
     <!-- 用户画像输入 -->
     <a-card class="profile-card" title="基本信息">
-      <a-form layout="inline" :model="profile">
+      <a-form layout="inline" :model="profile" class="plan-form">
         <a-form-item label="省份" required>
-          <a-select v-model:value="profile.province" placeholder="选择省份" style="width: 120px">
+          <a-select
+            v-model:value="profile.province"
+            placeholder="选择省份"
+            style="width: 140px"
+            show-search
+            :filter-option="filterProvince"
+          >
             <a-select-option v-for="p in provinces" :key="p" :value="p">{{ p }}</a-select-option>
           </a-select>
         </a-form-item>
         <a-form-item label="科类" required>
-          <a-select v-model:value="profile.subject_type" placeholder="科类" style="width: 130px">
+          <a-select
+            v-model:value="profile.subject_type"
+            placeholder="科类"
+            style="width: 130px"
+            show-search
+          >
             <a-select-option v-for="s in subjectTypes" :key="s" :value="s">{{ s }}</a-select-option>
           </a-select>
         </a-form-item>
@@ -39,9 +50,9 @@
     <template v-if="plan">
       <div class="plan-summary">
         <a-statistic title="推荐总数" :value="plan.summary?.total || 0" suffix="所" />
-        <a-statistic title="冲" :value="plan.summary?.rush_count || 0" suffix="所" value-style="color: #cf1322" />
-        <a-statistic title="稳" :value="plan.summary?.stable_count || 0" suffix="所" value-style="color: #3f8600" />
-        <a-statistic title="保" :value="plan.summary?.safe_count || 0" suffix="所" value-style="color: #1890ff" />
+        <a-statistic title="冲" :value="plan.summary?.rush_count || 0" suffix="所" :value-style="{ color: '#cf1322' }" />
+        <a-statistic title="稳" :value="plan.summary?.stable_count || 0" suffix="所" :value-style="{ color: '#3f8600' }" />
+        <a-statistic title="保" :value="plan.summary?.safe_count || 0" suffix="所" :value-style="{ color: '#1890ff' }" />
       </div>
 
       <a-tabs v-model:activeKey="activeTab">
@@ -71,6 +82,12 @@ import { validatePlanProfile, resolveRank, resolvePlan } from './logic'
 const provinces = PROVINCES
 const subjectTypes = SUBJECT_TYPES
 
+// 省份搜索过滤：支持拼音/汉字模糊匹配
+const filterProvince = (input, option) => {
+  const label = option?.children?.[0]?.children || option?.value || ''
+  return String(label).toLowerCase().includes(input.toLowerCase())
+}
+
 const profile = ref({
   province: undefined,
   subject_type: undefined,
@@ -87,7 +104,7 @@ const activeTab = ref('rush')
 const PlanTable = defineComponent({
   props: {
     data: { type: Array, default: () => [] },
-    color: { type: String, default: '#333' },
+    color: { type: String, default: 'var(--gray-1000)' },
   },
   setup(props) {
     const columns = [
@@ -103,7 +120,7 @@ const PlanTable = defineComponent({
         key: 'majors',
         width: 220,
         customRender: ({ value }) => {
-          if (!value || !value.length) return h('span', { style: { color: '#bbb' } }, '—')
+          if (!value || !value.length) return h('span', { style: { color: 'var(--gray-400)' } }, '—')
           return h(
             'div',
             { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
@@ -140,7 +157,6 @@ async function generatePlan() {
       const rankRes = await zhiyuanApi.getScoreRank({
         score: profile.value.score,
         province: profile.value.province,
-        year: 2025,
         subject_type: profile.value.subject_type,
       })
       rank = resolveRank(rankRes)
@@ -185,7 +201,7 @@ async function generatePlan() {
   }
 
   .subtitle {
-    color: #666;
+    color: var(--gray-600);
     font-size: 14px;
     margin: 0;
   }
@@ -200,7 +216,8 @@ async function generatePlan() {
   gap: 40px;
   margin-bottom: 20px;
   padding: 16px 24px;
-  background: #fafafa;
+  background: var(--gray-10);
+  border: 1px solid var(--gray-100);
   border-radius: 8px;
 }
 </style>

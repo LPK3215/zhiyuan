@@ -33,21 +33,21 @@ function buildQueryString(params = {}) {
 export { GRAPH_RELATION_OPTIONS } from '@/constants/graphRelations'
 
 export const zhiyuanApi = {
-  /** 搜索院校 */
-  searchUniversities: (params) =>
-    apiGet('/api/zhiyuan/universities', params),
+/** 搜索院校 */
+searchUniversities: (params = {}) =>
+apiGet(`/api/zhiyuan/universities${buildQueryString(params)}`),
 
   /** 获取院校详情 */
   getUniversityDetail: (id) =>
     apiGet(buildUniversityDetailUrl(id)),
 
-  /** 查询录取分数 */
-  queryScores: (params) =>
-    apiGet('/api/zhiyuan/scores', params),
+/** 查询录取分数 */
+queryScores: (params = {}) =>
+apiGet(`/api/zhiyuan/scores${buildQueryString(params)}`),
 
-  /** 查询一分一段 */
-  getScoreRank: (params) =>
-    apiGet('/api/zhiyuan/rank', params),
+/** 查询一分一段 */
+getScoreRank: (params = {}) =>
+apiGet(`/api/zhiyuan/rank${buildQueryString(params)}`),
 
   /** 冲稳保推荐 */
   recommend: (data) =>
@@ -57,9 +57,9 @@ export const zhiyuanApi = {
   generatePlan: (data) =>
     apiPost('/api/zhiyuan/plan', data),
 
-  /** 知识图谱查询 */
-  queryGraph: (params) =>
-    apiGet('/api/zhiyuan/graph', buildQueryGraphParams(params)),
+/** 知识图谱查询 */
+queryGraph: (params) =>
+apiGet(`/api/zhiyuan/graph${buildQueryString(buildQueryGraphParams(params))}`),
 
   /** 省份规则 */
   getProvinceRule: (province) =>
@@ -69,9 +69,9 @@ export const zhiyuanApi = {
   compareMajors: (data) =>
     apiPost('/api/zhiyuan/majors/compare', data),
 
-  /** 选科检查 */
-  checkSubject: (params) =>
-    apiGet('/api/zhiyuan/subject-check', params),
+/** 选科检查 */
+checkSubject: (params = {}) =>
+apiGet(`/api/zhiyuan/subject-check${buildQueryString(params)}`),
 
   // ========== Admin CRUD ==========
 
@@ -131,7 +131,7 @@ export const zhiyuanApi = {
   adminUpsertRule: (data) =>
     apiAdminPost('/api/zhiyuan/admin/rules', data),
 
-  /** 计划列表（直接返回数组，上限 100 条） */
+  /** 计划列表（分页：返回 {total, page, size, items}） */
   adminListPlans: (params = {}) =>
     apiAdminGet(`/api/zhiyuan/admin/plans${buildQueryString(params)}`),
 

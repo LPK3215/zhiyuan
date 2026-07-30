@@ -16,7 +16,7 @@ from yuxi.repositories.zhiyuan_models import (
     ProvinceRule,
     University,
 )
-from yuxi.repositories.zhiyuan_repository import ZhiyuanRepository
+from yuxi.repositories.zhiyuan_repository import ZhiyuanRepository, _escape_like, _LIKE_ESCAPE_CHAR
 from sqlalchemy import func, select
 
 zhiyuan = APIRouter(prefix="/zhiyuan", tags=["zhiyuan"])
@@ -41,6 +41,24 @@ async def _paginate(db: AsyncSession, model, conditions: list, page: int, size: 
     return {"total": total, "page": page, "size": size, "items": [r.to_dict() for r in rows]}
 
 
+async def _enrich_with_university_names(db: AsyncSession, items: list[dict]) -> None:
+    """批量补全 items 中每条记录的 university_name 字段。
+
+    用于管理端分数/计划列表，避免前端只拿到 university_id 无法直观识别院校。
+    单条 IN 查询，O(1) DB 调用。
+    """
+    ids = {item.get("university_id") for item in items if item.get("university_id")}
+    if not ids:
+        return
+    rows = (
+        await db.execute(select(University.id, University.name).where(University.id.in_(ids)))
+    ).all()
+    name_map = {r[0]: r[1] for r in rows}
+    for item in items:
+        uid = item.get("university_id")
+        item["university_name"] = name_map.get(uid, "") if uid else ""
+
+
 async def _ensure_university_exists(db: AsyncSession, university_id: int) -> None:
     """外键存在性校验：确保 university_id 指向真实存在的院校。
 
@@ -54,21 +72,6 @@ async def _ensure_university_exists(db: AsyncSession, university_id: int) -> Non
     ).scalar_one_or_none()
     if exists is None:
         raise HTTPException(status_code=422, detail=f"university_id={university_id} 不存在")
-
-
-def _parse_positive_rank(raw) -> int:
-    """将请求体中的 rank 解析为正整数。
-
-    /recommend 与 /plan 接收裸 dict，rank 可能是字符串或非法值；
-    直接 int() 对非数字会抛 ValueError 导致 500，这里统一转成 400。
-    """
-    try:
-        rank = int(raw)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="rank 必须为整数")
-    if rank <= 0:
-        raise HTTPException(status_code=400, detail="rank 必须为正整数")
-    return rank
 
 
 # ========== 用户端接口 ==========
@@ -138,13 +141,15 @@ async def query_scores(
 async def get_score_rank(
     score: int = Query(..., description="分数"),
     province: str = Query(..., description="省份"),
-    year: int = Query(default=2025, description="年份"),
+    year: int = Query(default=0, description="年份，0 表示查最近年份"),
     subject_type: str = Query(default="", description="科类"),
     db: AsyncSession = Depends(get_db),
     _user=Depends(get_required_user),
 ):
-    """查询一分一段（分数→位次）"""
+    """查询一分一段（分数→位次），year=0 时自动取最近可用年份"""
     repo = ZhiyuanRepository(db)
+    if year <= 0:
+        year = await repo.get_latest_rank_year(province) or 0
     result = await repo.get_rank_by_score(score, province, year, subject_type)
     if not result:
         result = await repo.get_nearest_rank(score, province, year, subject_type)
@@ -153,24 +158,28 @@ async def get_score_rank(
     return {"message": "ok", "data": result}
 
 
+class RecommendRequest(BaseModel):
+    """冲稳保推荐请求体"""
+
+    rank: int = Field(..., gt=0, description="用户位次（全省排名），必须为正")
+    province: str = Field(..., min_length=1, description="省份")
+    subject_type: str = Field(default="", description="科类")
+    strategy: str = Field(default="all", description="策略：all/rush/stable/safe")
+
+
 @zhiyuan.post("/recommend")
 async def recommend_schools(
-    body: dict,
+    body: RecommendRequest,
     db: AsyncSession = Depends(get_db),
     _user=Depends(get_required_user),
 ):
     """冲稳保推荐"""
-    province = body.get("province")
-    if body.get("rank") is None or not province:
-        raise HTTPException(status_code=400, detail="缺少 rank 或 province")
-    rank = _parse_positive_rank(body.get("rank"))
-
     repo = ZhiyuanRepository(db)
     result = await repo.recommend_by_rank(
-        rank=rank,
-        province=province,
-        subject_type=body.get("subject_type", ""),
-        strategy=body.get("strategy", "all"),
+        rank=body.rank,
+        province=body.province,
+        subject_type=body.subject_type,
+        strategy=body.strategy,
     )
 
     # 补全院校名称/层次/省份（单条 IN 查询，与 /plan 对齐，避免前端仅拿到 university_id）
@@ -187,23 +196,28 @@ async def recommend_schools(
     return {"message": "ok", "data": result}
 
 
+class GeneratePlanRequest(BaseModel):
+    """生成志愿方案请求体"""
+
+    rank: int = Field(..., gt=0, description="用户位次（全省排名），必须为正")
+    province: str = Field(..., min_length=1, description="省份")
+    subject_type: str = Field(default="", description="科类")
+    subject_combination: str = Field(default="", description="选科组合，如'物理+化学+生物'")
+    score: int = Field(default=0, ge=0, le=750, description="高考分数")
+
+
 @zhiyuan.post("/plan")
 async def generate_plan(
-    body: dict,
+    body: GeneratePlanRequest,
     db: AsyncSession = Depends(get_db),
     _user=Depends(get_required_user),
 ):
     """生成志愿方案（含冲稳保三档 + 每所院校的推荐专业）"""
-    province = body.get("province")
-    if body.get("rank") is None or not province:
-        raise HTTPException(status_code=400, detail="缺少 rank 或 province")
-    rank = _parse_positive_rank(body.get("rank"))
-
     repo = ZhiyuanRepository(db)
     recommendation = await repo.recommend_by_rank(
-        rank=rank,
-        province=province,
-        subject_type=body.get("subject_type", ""),
+        rank=body.rank,
+        province=body.province,
+        subject_type=body.subject_type,
         strategy="all",
     )
 
@@ -215,13 +229,13 @@ async def generate_plan(
     }
     uni_map = await repo.get_university_maps(all_ids, fields=("name", "level", "province"))
 
-    subject_combination = body.get("subject_combination", "")
+    subject_combination = body.subject_combination
     # 批量补全所有院校的专业维度（单条 IN 查询，消除逐校 N+1）
     majors_map = await repo.get_university_majors_batch(
-        all_ids, province, subject_combination, top_n=3
+        all_ids, body.province, subject_combination, top_n=3
     )
 
-    plan = {"profile": body, "rush": [], "stable": [], "safe": []}
+    plan = {"profile": body.model_dump(), "rush": [], "stable": [], "safe": []}
     for category in ("rush", "stable", "safe"):
         for item in recommendation.get(category, []):
             uni = uni_map.get(item["university_id"], {})
@@ -244,6 +258,7 @@ async def generate_plan(
 
 
 # 图谱关系类型白名单（防止 relation_type 被注入到 Cypher 模式）
+# 同时包含英文（知识库图谱）和中文（智愿种子图谱）关系名
 _GRAPH_RELATION_WHITELIST = {
     "belongs_to",
     "has_major",
@@ -252,6 +267,11 @@ _GRAPH_RELATION_WHITELIST = {
     "requires",
     "offers",
     "adjacent_to",
+    # 智愿种子图谱使用的中文关系名
+    "开设",
+    "属于",
+    "对应职业",
+    "前置学科",
 }
 
 
@@ -275,20 +295,40 @@ async def query_graph(
         raise HTTPException(status_code=400, detail="实体名称过长（最多100字符）")
 
     try:
-        from yuxi.knowledge.runtime import knowledge_base
+        from yuxi.storage.neo4j import get_shared_neo4j_connection, neo4j_read
 
-        graph_db = getattr(knowledge_base, "graph", None)
-        if graph_db is None:
+        conn = get_shared_neo4j_connection()
+        if not conn.is_running():
             return {"message": "图谱服务未启用", "data": []}
 
         safe_rel = relation_type if relation_type in _GRAPH_RELATION_WHITELIST else ""
-        rel_filter = f"-[r:{safe_rel}]-" if safe_rel else "-[r]-"
         safe_depth = max(1, min(int(depth), 4))
-        cypher = (
-            f"MATCH path = (n {{name: $entity}}){rel_filter}*1..{safe_depth}(m) "
-            f"RETURN n.name AS start, type(r) AS relation, m.name AS target LIMIT 50"
+        if safe_depth == 1:
+            # depth=1: direct relationships, r is a single relationship
+            # 使用 startNode/endNode 确保关系方向正确
+            rel_pattern = f"-[r:{safe_rel}]-" if safe_rel else "-[r]-"
+            cypher = (
+                f"MATCH (n {{name: $entity}}){rel_pattern}(m) "
+                f"RETURN startNode(r).name AS start, type(r) AS relation, endNode(r).name AS target LIMIT 50"
+            )
+        else:
+            # depth>1: variable-length path, UNWIND 展开每条关系
+            # 必须使用 startNode(rel)/endNode(rel) 获取每条关系的实际端点，
+            # 不能用 n.name/m.name（它们是路径的起止点，不是每条关系的端点）
+            rel_pattern = f"*1..{safe_depth}"
+            rel_type_filter = f":{safe_rel}" if safe_rel else ""
+            cypher = (
+                f"MATCH path = (n {{name: $entity}})-[r{rel_type_filter}{rel_pattern}]-(m) "
+                f"UNWIND relationships(path) AS rel "
+                f"WITH DISTINCT startNode(rel).name AS start, type(rel) AS relation, endNode(rel).name AS target "
+                f"RETURN start, relation, target LIMIT 50"
+            )
+        # 使用同步 Neo4j 驱动在线程中执行查询，避免阻塞事件循环
+        import asyncio
+
+        results = await asyncio.to_thread(
+            neo4j_read, conn.driver, cypher, entity=clean_entity
         )
-        results = await graph_db.query(cypher, {"entity": clean_entity})
         # 统一返回 {message, data} envelope，使成功/未启用/失败三种状态结构一致，
         # 前端 resolveGraph 通过 res?.data 透明消费，无需区分裸 list 与降级包。
         return {"message": "ok", "data": results or []}
@@ -312,18 +352,22 @@ async def get_province_rule(
     return {"message": "ok", "data": rule}
 
 
+class CompareMajorsRequest(BaseModel):
+    """专业对比请求体"""
+
+    major_names: list[str] = Field(..., min_length=2, description="要对比的专业名称列表")
+    university_name: str = Field(default="", description="限定在某校内对比（可选）")
+
+
 @zhiyuan.post("/majors/compare")
 async def compare_majors(
-    body: dict,
+    body: CompareMajorsRequest,
     db: AsyncSession = Depends(get_db),
     _user=Depends(get_required_user),
 ):
     """专业对比"""
-    major_names = body.get("major_names", [])
-    if len(major_names) < 2:
-        raise HTTPException(status_code=400, detail="至少提供2个专业名称")
     repo = ZhiyuanRepository(db)
-    results = await repo.compare_majors(major_names, body.get("university_name", ""))
+    results = await repo.compare_majors(body.major_names, body.university_name)
     return {"message": "ok", "data": results}
 
 
@@ -373,7 +417,7 @@ async def admin_list_universities(
     """管理端：院校列表（分页）"""
     conditions = []
     if keyword:
-        conditions.append(University.name.ilike(f"%{keyword}%"))
+        conditions.append(University.name.ilike(f"%{_escape_like(keyword)}%", escape=_LIKE_ESCAPE_CHAR))
     return await _paginate(db, University, conditions, page, size)
 
 
@@ -404,8 +448,6 @@ async def admin_update_university(
     _admin=Depends(get_admin_user),
 ):
     """管理端：更新院校"""
-    from sqlalchemy import select
-
     result = await db.execute(select(University).where(University.id == university_id))
     uni = result.scalar_one_or_none()
     if not uni:
@@ -425,8 +467,6 @@ async def admin_delete_university(
     _admin=Depends(get_admin_user),
 ):
     """管理端：删除院校"""
-    from sqlalchemy import select
-
     result = await db.execute(select(University).where(University.id == university_id))
     uni = result.scalar_one_or_none()
     if not uni:
@@ -469,8 +509,10 @@ async def admin_list_majors(
     if university_id:
         conditions.append(Major.university_id == university_id)
     if keyword:
-        conditions.append(Major.name.ilike(f"%{keyword}%"))
-    return await _paginate(db, Major, conditions, page, size)
+        conditions.append(Major.name.ilike(f"%{_escape_like(keyword)}%", escape=_LIKE_ESCAPE_CHAR))
+    result = await _paginate(db, Major, conditions, page, size)
+    await _enrich_with_university_names(db, result["items"])
+    return result
 
 
 @admin.post("/majors")
@@ -495,8 +537,6 @@ async def admin_delete_major(
     _admin=Depends(get_admin_user),
 ):
     """管理端：删除专业"""
-    from sqlalchemy import select
-
     result = await db.execute(select(Major).where(Major.id == major_id))
     major = result.scalar_one_or_none()
     if not major:
@@ -542,7 +582,9 @@ async def admin_list_scores(
         conditions.append(AdmissionScore.province == province)
     if year:
         conditions.append(AdmissionScore.year == year)
-    return await _paginate(db, AdmissionScore, conditions, page, size)
+    result = await _paginate(db, AdmissionScore, conditions, page, size)
+    await _enrich_with_university_names(db, result["items"])
+    return result
 
 
 @admin.post("/scores")
@@ -599,8 +641,6 @@ async def admin_delete_score(
     _admin=Depends(get_admin_user),
 ):
     """管理端：删除录取分数"""
-    from sqlalchemy import select
-
     result = await db.execute(select(AdmissionScore).where(AdmissionScore.id == score_id))
     score = result.scalar_one_or_none()
     if not score:
@@ -630,11 +670,9 @@ async def admin_list_rules(
     db: AsyncSession = Depends(get_db),
     _admin=Depends(get_admin_user),
 ):
-    """管理端：所有省份规则（上限 500 条，避免无界返回）"""
-    from sqlalchemy import select
-
-    rows = (await db.execute(select(ProvinceRule).limit(500))).scalars().all()
-    return [r.to_dict() for r in rows]
+    """管理端：所有省份规则（上限分页，避免无界返回）"""
+    rows = (await db.execute(select(ProvinceRule).limit(_ADMIN_LIST_CAP))).scalars().all()
+    return {"total": len(rows), "items": [r.to_dict() for r in rows]}
 
 
 @admin.post("/rules")
@@ -644,8 +682,6 @@ async def admin_upsert_rule(
     _admin=Depends(get_admin_user),
 ):
     """管理端：新增或更新省份规则"""
-    from sqlalchemy import select
-
     if not body.province.strip():
         raise HTTPException(status_code=422, detail="province 不能为空")
     if body.year <= 0:
@@ -689,12 +725,12 @@ async def admin_list_plans(
     university_id: int = Query(default=0),
     province: str = Query(default=""),
     year: int = Query(default=0),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     _admin=Depends(get_admin_user),
 ):
-    """管理端：招生计划列表"""
-    from sqlalchemy import select
-
+    """管理端：招生计划列表（分页）"""
     conditions = []
     if university_id:
         conditions.append(EnrollmentPlan.university_id == university_id)
@@ -702,13 +738,9 @@ async def admin_list_plans(
         conditions.append(EnrollmentPlan.province == province)
     if year:
         conditions.append(EnrollmentPlan.year == year)
-
-    stmt = select(EnrollmentPlan)
-    if conditions:
-        stmt = stmt.where(*conditions)
-    stmt = stmt.limit(100)
-    rows = (await db.execute(stmt)).scalars().all()
-    return [r.to_dict() for r in rows]
+    result = await _paginate(db, EnrollmentPlan, conditions, page, size)
+    await _enrich_with_university_names(db, result["items"])
+    return result
 
 
 @admin.post("/plans")
