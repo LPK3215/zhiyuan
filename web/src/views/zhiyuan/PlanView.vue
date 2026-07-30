@@ -94,7 +94,20 @@
       </a-tabs>
     </template>
 
-    <a-empty v-else-if="!generating" description="填写信息后点击生成方案" style="margin-top: 60px" />
+    <a-empty v-else-if="!generating" description="填写信息后点击生成方案" style="margin-top: 60px">
+      <template #description>
+        <p style="color: var(--gray-600); margin: 0 0 4px">填写信息后点击生成方案</p>
+        <p style="color: var(--gray-500); font-size: 12px; margin: 0">
+          系统将基于历年录取数据，为你生成冲稳保三档院校方案
+        </p>
+      </template>
+    </a-empty>
+
+    <!-- 生成中状态 -->
+    <div v-if="generating" class="generating-state">
+      <a-spin tip="正在生成志愿方案..." size="large" />
+      <p class="generating-hint">系统正在分析历年录取数据，匹配冲稳保三档院校</p>
+    </div>
   </div>
 </template>
 
@@ -379,5 +392,29 @@ function printPlan() {
   .ant-tabs-tabpane {
     display: block !important;
   }
+}
+
+.generating-state {
+  margin-top: 80px;
+  text-align: center;
+
+  :deep(.ant-spin) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+
+    .ant-spin-text {
+      font-size: 15px;
+      color: var(--main-600);
+      font-weight: 500;
+    }
+  }
+}
+
+.generating-hint {
+  margin-top: 24px;
+  font-size: 13px;
+  color: var(--gray-500);
 }
 </style>

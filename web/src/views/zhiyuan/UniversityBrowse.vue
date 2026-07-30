@@ -61,7 +61,15 @@
           </div>
         </div>
       </div>
-      <a-empty v-if="!loading && universities.length === 0" description="暂无匹配院校" />
+      <a-empty v-if="!loading && universities.length === 0" description="暂无匹配院校">
+        <template #description>
+          <p style="color: var(--gray-600); margin: 0 0 8px">暂无匹配院校</p>
+          <p style="color: var(--gray-500); font-size: 12px; margin: 0 0 12px">
+            可尝试：清空筛选条件、更换省份/层次、或使用更短的关键词
+          </p>
+          <a-button size="small" type="primary" ghost @click="resetFilters">重置筛选</a-button>
+        </template>
+      </a-empty>
     </a-spin>
 
     <!-- 院校详情弹窗 -->
@@ -192,6 +200,7 @@ async function handleSearch() {
     universities.value = resolveUniversities(res)
   } catch (e) {
     console.error('搜索院校失败', e)
+    universities.value = []
   } finally {
     loading.value = false
   }
@@ -220,6 +229,12 @@ async function showDetail(uni) {
   }).finally(() => {
     scoreLoading.value = false
   })
+}
+
+function resetFilters() {
+  keyword.value = ''
+  filters.value = { province: undefined, level: undefined, type: undefined }
+  handleSearch()
 }
 
 onMounted(() => {

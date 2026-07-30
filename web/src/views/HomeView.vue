@@ -199,6 +199,14 @@
             <h3 class="feature-title">智愿AI顾问</h3>
             <p class="feature-desc">对话式咨询，即时解答志愿填报、选科、专业前景等疑问</p>
           </div>
+
+          <div class="feature-card" @click="goToPolicy">
+            <div class="feature-icon feature-icon--policy">
+              <BookOpen :size="28" />
+            </div>
+            <h3 class="feature-title">招生政策问答</h3>
+            <p class="feature-desc">语义检索招生政策原文，平行志愿、选科要求、专项计划等政策条款</p>
+          </div>
         </div>
       </section>
 
@@ -259,6 +267,7 @@ import {
   TrendingUp,
   ShieldCheck,
   FileText,
+  BookOpen,
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -432,6 +441,15 @@ const goToBrowse = () => {
     return
   }
   router.push('/zhiyuan/universities')
+}
+
+const goToPolicy = () => {
+  if (!userStore.isLoggedIn) {
+    sessionStorage.setItem('redirect', '/zhiyuan/policy')
+    router.push('/login')
+    return
+  }
+  router.push('/zhiyuan/policy')
 }
 
 onMounted(() => {
@@ -1043,6 +1061,10 @@ onUnmounted(() => {
 
 .feature-icon--chat {
   background: linear-gradient(135deg, #7c3aed, #6d28d9);
+}
+
+.feature-icon--policy {
+  background: linear-gradient(135deg, #ea580c, #f97316);
 }
 
 .feature-title {
