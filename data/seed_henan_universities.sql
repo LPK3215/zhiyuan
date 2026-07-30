@@ -717,6 +717,10 @@ FROM zhiyuan_universities u JOIN zhiyuan_majors m ON m.university_id=u.id
 WHERE u.name='河南农业大学' AND m.name='园林'
 AND NOT EXISTS (SELECT 1 FROM zhiyuan_enrollment_plans p WHERE p.university_id=u.id AND p.major_id=m.id AND p.province='河南' AND p.year=2024);
 
+-- 确保院校整体录取线 major_id=0 (推荐算法 recommend_by_rank 依赖此约定:
+-- 过滤条件为 AdmissionScore.major_id == 0 表示院校整体线)
+UPDATE zhiyuan_admission_scores SET major_id = 0 WHERE major_id IS NULL;
+
 COMMIT;
 
 -- ============================================================

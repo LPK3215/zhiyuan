@@ -308,6 +308,21 @@ class RecommendSchoolsInput(BaseModel):
     strategy: str = Field(default="all", description="策略：all/rush/stable/safe")
 
 
+def _estimate_probability(ratio: float) -> int:
+    """根据用户位次与院校历年平均位次的比值估算录取概率（%）。
+
+    ratio = 用户位次 / 院校平均位次
+    - ratio < 0.8：用户位次远优于院校 → 高概率（保底）
+    - 0.8 ~ 1.25：匹配区间 → 中等概率（稳）
+    - > 1.25：用户位次不如院校 → 低概率（冲）
+    公式：100/ratio² - 10，钳制在 [5, 95]
+    """
+    if ratio <= 0:
+        return 5
+    prob = int(100 / (ratio * ratio) - 10)
+    return max(5, min(95, prob))
+
+
 @tool(category="buildin", tags=["志愿填报"], display_name="冲稳保推荐", args_schema=RecommendSchoolsInput)
 async def recommend_schools(rank: int, province: str, subject_type: str = "", strategy: str = "all") -> str:
     """基于用户位次，推荐冲/稳/保三档院校。
@@ -318,7 +333,7 @@ async def recommend_schools(rank: int, province: str, subject_type: str = "", st
     async def _query(repo):
         result = await repo.recommend_by_rank(rank, province, subject_type, strategy)
 
-        # 补充院校名称（复用当前会话，避免嵌套开启新 session；单条 IN 查询避免 N+1）
+        # 补充院校名称 + 估算录取概率
         all_ids = set()
         for group in result.values():
             for item in group:
@@ -332,9 +347,28 @@ async def recommend_schools(rank: int, province: str, subject_type: str = "", st
                     item["university_name"] = info.get("name", f"ID:{item['university_id']}")
                     item["level"] = info.get("level", "")
 
+        # 为每个推荐项估算录取概率
+        all_probabilities = []
+        for group in result.values():
+            for item in group:
+                prob = _estimate_probability(item.get("ratio", 1.0))
+                item["probability"] = prob
+                all_probabilities.append(prob)
+
         total = sum(len(v) for v in result.values())
         if total == 0:
             return f"位次 {rank} 在 {province} 暂无匹配推荐（可能数据不足）"
+
+        # 低概率友好提示：所有推荐院校概率均低于30%时给出建议
+        if all_probabilities and all(p < 30 for p in all_probabilities):
+            best_prob = max(all_probabilities)
+            warning = (
+                f"⚠️ 提示：当前推荐的所有院校录取概率均低于30%（最高仅{best_prob}%），"
+                f"说明您的位次 {rank} 相对靠后，数据库中缺乏与之匹配的院校数据。\n"
+                f"建议：1）关注省外院校或批次靠后的院校；2）考虑降低目标层次（如从一本转向二本）；"
+                f"3）关注征集志愿和降分录取机会。\n\n"
+            )
+            return warning + json.dumps(result, ensure_ascii=False, indent=2)
 
         return json.dumps(result, ensure_ascii=False, indent=2)
 
