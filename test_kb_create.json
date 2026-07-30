@@ -1,9 +1,0 @@
-{
-  "database_name": "测试知识库",
-  "description": "用于功能测试的临时知识库",
-  "embedding_model_spec": "siliconflow-cn:Pro/BAAI/bge-m3",
-  "kb_type": "milvus",
-  "additional_params": {"chunk_preset_id": "general"},
-  "llm_model_spec": null,
-  "share_config": {"access_level": "global", "department_ids": [], "user_uids": []}
-}

@@ -412,8 +412,6 @@ async def check_subject(
 
 # 政策知识库名称候选：上传时可能使用 zhaoShengZhengCe 或中文名
 _POLICY_KB_NAME_KEYWORDS = ("zhaoShengZhengCe", "zhaoSheng", "招生政策", "招生", "政策")
-_POLICY_SEARCH_CACHE: dict[str, tuple[float, Any]] = {}
-_POLICY_SEARCH_CACHE_TTL = 60
 
 
 class PolicySearchRequest(BaseModel):
@@ -659,9 +657,7 @@ async def get_data_health(
     uni_with_plans_set = set(uni_with_plans)
     no_plans = max(0, uni_total - len(uni_with_plans_set))
 
-    # 综合健康分（0-100）：每个维度权重相同
-    total_checks = 6
-    passed = 0
+    # 综合健康分（0-100）：按维度加权计算
     if uni_total == 0:
         return {
             "message": "ok",

@@ -43,6 +43,14 @@ cache
 .playwright-mcp
 .opencode
 
+# 临时调试/测试文件（根目录）
+/test_*.json
+/test_*.ps1
+/test_*.sh
+/test_*.txt
+/_commit_msg*.txt
+/_*.tmp
+
 
 ### IDE
 .vscode
