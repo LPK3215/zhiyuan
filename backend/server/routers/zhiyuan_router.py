@@ -14,6 +14,7 @@ from yuxi.repositories.zhiyuan_models import (
     EnrollmentPlan,
     Major,
     ProvinceRule,
+    ScoreRank,
     University,
 )
 from yuxi.repositories.zhiyuan_repository import ZhiyuanRepository, _escape_like, _LIKE_ESCAPE_CHAR
@@ -382,6 +383,52 @@ async def check_subject(
     repo = ZhiyuanRepository(db)
     results = await repo.check_subject_requirement(combination, province)
     return {"message": "ok", "data": results}
+
+
+@zhiyuan.get("/stats")
+async def get_public_stats(
+    db: AsyncSession = Depends(get_db),
+):
+    """公开统计端点（首页展示用，无需认证）
+
+    返回各业务表的数据量，用于首页展示平台数据规模。
+    """
+    uni_count = (await db.execute(select(func.count()).select_from(University))).scalar() or 0
+    major_count = (await db.execute(select(func.count()).select_from(Major))).scalar() or 0
+    score_count = (await db.execute(select(func.count()).select_from(AdmissionScore))).scalar() or 0
+    rank_count = (await db.execute(select(func.count()).select_from(ScoreRank))).scalar() or 0
+    plan_count = (await db.execute(select(func.count()).select_from(EnrollmentPlan))).scalar() or 0
+    province_count = (
+        await db.execute(select(func.count(func.distinct(University.province))))
+    ).scalar() or 0
+    level_985 = (
+        await db.execute(
+            select(func.count()).select_from(
+                select(University).where(University.level == "985").subquery()
+            )
+        )
+    ).scalar() or 0
+    level_211 = (
+        await db.execute(
+            select(func.count()).select_from(
+                select(University).where(University.level == "211").subquery()
+            )
+        )
+    ).scalar() or 0
+
+    return {
+        "message": "ok",
+        "data": {
+            "universities": uni_count,
+            "majors": major_count,
+            "admission_scores": score_count,
+            "score_ranks": rank_count,
+            "enrollment_plans": plan_count,
+            "provinces_covered": province_count,
+            "level_985": level_985,
+            "level_211": level_211,
+        },
+    }
 
 
 # ========== 管理端 CRUD 接口 ==========

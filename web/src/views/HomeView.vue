@@ -162,6 +162,73 @@
         </div>
       </main>
 
+      <!-- 数据统计展示 -->
+      <section v-if="stats" class="stats-bar reveal-up delay-2">
+        <div class="stats-track">
+          <div class="stat-item" v-for="stat in displayStats" :key="stat.label">
+            <span class="stat-number">{{ stat.value }}</span>
+            <span class="stat-label">{{ stat.label }}</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 核心功能入口 -->
+      <section class="features-section">
+        <h2 class="section-title">核心功能</h2>
+        <div class="features-grid">
+          <div class="feature-card" @click="goToPlan">
+            <div class="feature-icon feature-icon--recommend">
+              <Target :size="28" />
+            </div>
+            <h3 class="feature-title">智能志愿推荐</h3>
+            <p class="feature-desc">输入分数位次，AI智能匹配冲稳保三档院校方案，附带录取概率估算</p>
+          </div>
+
+          <div class="feature-card" @click="goToBrowse">
+            <div class="feature-icon feature-icon--browse">
+              <Search :size="28" />
+            </div>
+            <h3 class="feature-title">院校专业库</h3>
+            <p class="feature-desc">浏览{{ stats.universities || '' }}所院校详情，筛选985/211/双一流，查看专业与历年分数</p>
+          </div>
+
+          <div class="feature-card" @click="goToChat">
+            <div class="feature-icon feature-icon--chat">
+              <MessageCircle :size="28" />
+            </div>
+            <h3 class="feature-title">智愿AI顾问</h3>
+            <p class="feature-desc">对话式咨询，即时解答志愿填报、选科、专业前景等疑问</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 特色亮点 -->
+      <section class="highlights-section">
+        <div class="highlights-grid">
+          <div class="highlight-item">
+            <TrendingUp :size="22" class="highlight-icon" />
+            <div>
+              <h4 class="highlight-title">历年数据支撑</h4>
+              <p class="highlight-text">{{ stats.admission_scores || 0 }}条录取分数 + {{ stats.score_ranks || 0 }}条位次数据</p>
+            </div>
+          </div>
+          <div class="highlight-item">
+            <ShieldCheck :size="22" class="highlight-icon" />
+            <div>
+              <h4 class="highlight-title">冲稳保算法</h4>
+              <p class="highlight-text">基于位次比值分析，科学划分冲刺/稳妥/保底三档</p>
+            </div>
+          </div>
+          <div class="highlight-item">
+            <FileText :size="22" class="highlight-icon" />
+            <div>
+              <h4 class="highlight-title">招生政策库</h4>
+              <p class="highlight-text">收录各省份招生政策文档，支持知识库智能检索</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <footer class="footer">
         <div class="footer-content">
           <p class="copyright">
@@ -179,8 +246,20 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useInfoStore } from '@/stores/info'
 import { healthApi } from '@/apis/system_api'
+import { zhiyuanApi } from '@/apis/zhiyuan_api'
 import UserInfoComponent from '@/components/UserInfoComponent.vue'
-import { ArrowRight, Workflow, Library, Sparkles } from 'lucide-vue-next'
+import {
+  ArrowRight,
+  Workflow,
+  Library,
+  Sparkles,
+  Target,
+  Search,
+  MessageCircle,
+  TrendingUp,
+  ShieldCheck,
+  FileText,
+} from 'lucide-vue-next'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -194,6 +273,21 @@ const typedBadge = ref('')
 const isBadgeTyping = ref(false)
 let badgeTimer = null
 let subtitleTimer = null
+
+// 平台数据统计
+const stats = ref(null)
+
+const displayStats = computed(() => {
+  if (!stats.value) return []
+  return [
+    { label: '覆盖院校', value: stats.value.universities || 0 },
+    { label: '专业数据', value: stats.value.majors || 0 },
+    { label: '录取分数', value: stats.value.admission_scores || 0 },
+    { label: '位次数据', value: stats.value.score_ranks || 0 },
+    { label: '招生计划', value: stats.value.enrollment_plans || 0 },
+    { label: '覆盖省份', value: stats.value.provinces_covered || 0 },
+  ]
+})
 
 const subtitleIndex = ref(0)
 
@@ -292,6 +386,12 @@ const loadData = async () => {
     await infoStore.loadInfoConfig()
     startSubtitleCarousel()
     startBadgeTyping()
+    // 加载平台统计数据（失败不影响首页展示）
+    zhiyuanApi.getPublicStats().then((res) => {
+      stats.value = res?.data || null
+    }).catch(() => {
+      // 统计加载失败时静默处理
+    })
   } catch (e) {
     console.error('加载失败:', e)
     stopBadgeTyping()
@@ -314,6 +414,24 @@ const goToChat = async () => {
   }
 
   router.push('/agent')
+}
+
+const goToPlan = () => {
+  if (!userStore.isLoggedIn) {
+    sessionStorage.setItem('redirect', '/zhiyuan/plan')
+    router.push('/login')
+    return
+  }
+  router.push('/zhiyuan/plan')
+}
+
+const goToBrowse = () => {
+  if (!userStore.isLoggedIn) {
+    sessionStorage.setItem('redirect', '/zhiyuan/universities')
+    router.push('/login')
+    return
+  }
+  router.push('/zhiyuan/universities')
 }
 
 onMounted(() => {
@@ -813,6 +931,179 @@ onUnmounted(() => {
   line-height: 1.5;
 }
 
+// 数据统计条
+.stats-bar {
+  position: relative;
+  z-index: 1;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 2rem;
+}
+
+.stats-track {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.5rem 2.5rem;
+  border-radius: 20px;
+  background: var(--color-trans-light);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--main-40);
+  box-shadow: 0 12px 40px -20px rgba(3, 80, 101, 0.2);
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 1;
+}
+
+.stat-number {
+  font-size: clamp(1.6rem, 2.5vw, 2.2rem);
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--main-600), var(--main-500));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  line-height: 1.1;
+}
+
+.stat-label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--gray-600);
+  white-space: nowrap;
+}
+
+// 核心功能区
+.features-section {
+  position: relative;
+  z-index: 1;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 3.5rem 2rem 1rem;
+}
+
+.section-title {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--main-800);
+  text-align: center;
+  margin: 0 0 2rem;
+}
+
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+}
+
+.feature-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.85rem;
+  padding: 1.75rem;
+  border-radius: 18px;
+  background: var(--color-trans-light);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--main-40);
+  cursor: pointer;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+
+  &:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 20px 40px -20px rgba(3, 80, 101, 0.25);
+    border-color: var(--main-200);
+  }
+}
+
+.feature-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  :deep(svg) {
+    color: var(--gray-0);
+  }
+}
+
+.feature-icon--recommend {
+  background: linear-gradient(135deg, var(--main-500), var(--main-600));
+}
+
+.feature-icon--browse {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+}
+
+.feature-icon--chat {
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+}
+
+.feature-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--main-800);
+  margin: 0;
+}
+
+.feature-desc {
+  font-size: 0.88rem;
+  color: var(--gray-600);
+  line-height: 1.55;
+  margin: 0;
+}
+
+// 特色亮点
+.highlights-section {
+  position: relative;
+  z-index: 1;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1rem 2rem 3rem;
+}
+
+.highlights-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.25rem;
+}
+
+.highlight-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  padding: 1.25rem;
+  border-radius: 14px;
+  background: var(--main-0);
+  border: 1px solid var(--main-40);
+}
+
+.highlight-icon {
+  color: var(--main-500);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.highlight-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--main-800);
+  margin: 0 0 0.25rem;
+}
+
+.highlight-text {
+  font-size: 0.82rem;
+  color: var(--gray-600);
+  line-height: 1.45;
+  margin: 0;
+}
+
 // 页脚
 .footer {
   position: relative;
@@ -962,6 +1253,23 @@ onUnmounted(() => {
     max-width: 520px;
     margin: 0 auto;
   }
+
+  .features-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .highlights-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .stats-track {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .stat-item {
+    flex: 0 0 30%;
+  }
 }
 
 @media (max-width: 768px) {
@@ -987,6 +1295,24 @@ onUnmounted(() => {
 
   .button-base {
     width: 100%;
+  }
+
+  .stats-bar {
+    padding: 0 1.25rem;
+  }
+
+  .stats-track {
+    padding: 1rem 1.25rem;
+  }
+
+  .stat-item {
+    flex: 0 0 45%;
+  }
+
+  .features-section,
+  .highlights-section {
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
   }
 }
 </style>

@@ -33,8 +33,12 @@ function buildQueryString(params = {}) {
 export { GRAPH_RELATION_OPTIONS } from '@/constants/graphRelations'
 
 export const zhiyuanApi = {
-/** 搜索院校 */
-searchUniversities: (params = {}) =>
+  /** 公开统计（首页展示用，无需认证） */
+  getPublicStats: () =>
+    apiGet('/api/zhiyuan/stats', {}, false),
+
+  /** 搜索院校 */
+  searchUniversities: (params = {}) =>
 apiGet(`/api/zhiyuan/universities${buildQueryString(params)}`),
 
   /** 获取院校详情 */
