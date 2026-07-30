@@ -65,7 +65,7 @@
     </a-spin>
 
     <!-- 院校详情弹窗 -->
-    <a-modal v-model:open="detailVisible" :title="detailData?.name" width="640px" :footer="null">
+    <a-modal v-model:open="detailVisible" :title="detailData?.name" width="720px" :footer="null">
       <template v-if="detailData">
         <a-descriptions :column="2" bordered size="small">
           <a-descriptions-item label="省份">{{ detailData.province }}</a-descriptions-item>
@@ -74,8 +74,29 @@
           <a-descriptions-item label="类型">{{ detailData.type }}</a-descriptions-item>
           <a-descriptions-item label="硕士点">{{ detailData.master_points }}</a-descriptions-item>
           <a-descriptions-item label="博士点">{{ detailData.doctor_points }}</a-descriptions-item>
-          <a-descriptions-item label="重点学科" :span="2">{{ detailData.key_disciplines }}</a-descriptions-item>
+          <a-descriptions-item label="重点学科" :span="2">{{ detailData.key_disciplines || '暂无' }}</a-descriptions-item>
         </a-descriptions>
+
+        <!-- 历年分数趋势图 -->
+        <div class="score-trend-section">
+          <h4 class="section-heading">
+            历年录取分数趋势
+            <a-spin v-if="scoreLoading" size="small" style="margin-left: 8px" />
+          </h4>
+          <div v-if="scoreTrend.length > 0" class="score-chart">
+            <div v-for="item in scoreTrend" :key="item.year" class="chart-bar-wrapper">
+              <span class="chart-score">{{ item.avgScore }}</span>
+              <div class="chart-bar" :style="{ height: item.heightPercent + '%' }"></div>
+              <span class="chart-year">{{ item.year }}</span>
+            </div>
+          </div>
+          <a-empty
+            v-else-if="!scoreLoading"
+            description="暂无分数数据"
+            :image="false"
+            style="padding: 12px 0"
+          />
+        </div>
 
         <h4 style="margin: 16px 0 8px">
           开设专业
@@ -95,7 +116,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { zhiyuanApi } from '@/apis/zhiyuan_api'
 import {
   PROVINCES,
@@ -107,6 +128,7 @@ import {
   buildUniversitySearchParams,
   resolveUniversities,
   resolveMajors,
+  resolveData,
 } from './logic'
 
 const keyword = ref('')
@@ -117,6 +139,8 @@ const detailVisible = ref(false)
 const detailData = ref(null)
 const detailMajors = ref([])
 const detailLoading = ref(false)
+const detailScores = ref([])
+const scoreLoading = ref(false)
 
 const provinces = PROVINCES
 const levels = UNIVERSITY_LEVELS
@@ -129,6 +153,36 @@ const majorColumns = [
   { title: '就业率', dataIndex: 'employment_rate', key: 'rate', width: 80 },
   { title: '平均薪资', dataIndex: 'avg_salary', key: 'salary', width: 90 },
 ]
+
+// 历年分数趋势图数据：按年份聚合，取每年平均分
+const scoreTrend = computed(() => {
+  if (!detailScores.value || detailScores.value.length === 0) return []
+  const byYear = {}
+  detailScores.value.forEach((s) => {
+    const y = s.year
+    if (!y) return
+    if (!byYear[y]) byYear[y] = { year: y, scores: [], provinces: new Set() }
+    if (s.min_score) byYear[y].scores.push(s.min_score)
+    if (s.province) byYear[y].provinces.add(s.province)
+  })
+  const trend = Object.values(byYear).sort((a, b) => a.year - b.year)
+  if (trend.length === 0) return []
+  const allScores = trend.flatMap((t) => t.scores)
+  const maxScore = Math.max(...allScores, 750)
+  const minScore = Math.min(...allScores, 0)
+  const range = maxScore - minScore || 1
+  return trend.map((t) => {
+    const avg = t.scores.length > 0
+      ? Math.round(t.scores.reduce((a, b) => a + b, 0) / t.scores.length)
+      : 0
+    return {
+      year: t.year,
+      avgScore: avg,
+      heightPercent: avg ? Math.round(((avg - minScore) / range) * 100) : 0,
+      provinceCount: t.provinces.size,
+    }
+  })
+})
 
 async function handleSearch() {
   loading.value = true
@@ -146,8 +200,10 @@ async function handleSearch() {
 async function showDetail(uni) {
   detailData.value = uni
   detailMajors.value = []
+  detailScores.value = []
   detailVisible.value = true
   detailLoading.value = true
+  scoreLoading.value = true
   try {
     const res = await zhiyuanApi.getUniversityDetail(uni.id)
     detailMajors.value = resolveMajors(res)
@@ -156,6 +212,14 @@ async function showDetail(uni) {
   } finally {
     detailLoading.value = false
   }
+  // 并行加载历年分数（失败不影响弹窗展示）
+  zhiyuanApi.queryScores({ university_name: uni.name }).then((res) => {
+    detailScores.value = resolveData(res) || []
+  }).catch(() => {
+    detailScores.value = []
+  }).finally(() => {
+    scoreLoading.value = false
+  })
 }
 
 onMounted(() => {
@@ -245,5 +309,60 @@ onMounted(() => {
     font-size: 12px;
     color: var(--gray-500);
   }
+}
+
+// 分数趋势图
+.score-trend-section {
+  margin-top: 16px;
+}
+
+.section-heading {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--gray-800);
+}
+
+.score-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  height: 120px;
+  padding: 12px 16px;
+  background: var(--gray-10);
+  border-radius: 8px;
+  border: 1px solid var(--gray-100);
+}
+
+.chart-bar-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 40px;
+  height: 100%;
+  justify-content: flex-end;
+}
+
+.chart-score {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--main-600);
+}
+
+.chart-bar {
+  width: 100%;
+  max-width: 36px;
+  min-height: 4px;
+  border-radius: 4px 4px 0 0;
+  background: linear-gradient(180deg, var(--main-400), var(--main-600));
+  transition: height 0.3s ease;
+}
+
+.chart-year {
+  font-size: 11px;
+  color: var(--gray-500);
+  font-weight: 500;
 }
 </style>
