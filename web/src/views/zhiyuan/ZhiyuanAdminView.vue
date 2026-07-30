@@ -388,6 +388,7 @@
               <a-select v-model:value="uniState.form.nature" placeholder="性质" allow-clear>
                 <a-select-option value="公办">公办</a-select-option>
                 <a-select-option value="民办">民办</a-select-option>
+                <a-select-option value="中外合作">中外合作</a-select-option>
               </a-select>
             </a-form-item>
           </a-col>

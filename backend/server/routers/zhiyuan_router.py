@@ -4,8 +4,11 @@
 管理端：/api/zhiyuan/admin/*  （数据增删改查）
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from pydantic import BaseModel, Field
+import time
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_db, get_required_user, get_admin_user
@@ -24,6 +27,26 @@ zhiyuan = APIRouter(prefix="/zhiyuan", tags=["zhiyuan"])
 
 # 管理端列表统一分页上限，避免无界返回
 _ADMIN_LIST_CAP = 500
+
+# 公开统计端点内存缓存：避免高频首页刷新打 DB（TTL 秒数）
+_STATS_CACHE_TTL = 30
+_stats_cache: dict[str, tuple[float, Any]] = {}
+
+
+def _get_cached(key: str):
+    """读取缓存。命中且未过期则返回值，否则返回 None。"""
+    entry = _stats_cache.get(key)
+    if not entry:
+        return None
+    ts, value = entry
+    if time.monotonic() - ts > _STATS_CACHE_TTL:
+        return None
+    return value
+
+
+def _set_cached(key: str, value: Any) -> None:
+    """写入缓存（带时间戳）。"""
+    _stats_cache[key] = (time.monotonic(), value)
 
 
 async def _paginate(db: AsyncSession, model, conditions: list, page: int, size: int) -> dict:
@@ -392,7 +415,12 @@ async def get_public_stats(
     """公开统计端点（首页展示用，无需认证）
 
     返回各业务表的数据量，用于首页展示平台数据规模。
+    使用 30 秒内存缓存，避免高频首页刷新打 DB。
     """
+    cached = _get_cached("stats")
+    if cached is not None:
+        return cached
+
     uni_count = (await db.execute(select(func.count()).select_from(University))).scalar() or 0
     major_count = (await db.execute(select(func.count()).select_from(Major))).scalar() or 0
     score_count = (await db.execute(select(func.count()).select_from(AdmissionScore))).scalar() or 0
@@ -416,7 +444,7 @@ async def get_public_stats(
         )
     ).scalar() or 0
 
-    return {
+    payload = {
         "message": "ok",
         "data": {
             "universities": uni_count,
@@ -429,6 +457,8 @@ async def get_public_stats(
             "level_211": level_211,
         },
     }
+    _set_cached("stats", payload)
+    return payload
 
 
 @zhiyuan.get("/stats/health")
@@ -444,7 +474,13 @@ async def get_data_health(
     - 无专业的院校数
     - 无录取分数的院校数
     - 无招生计划的院校数
+
+    使用 30 秒内存缓存，避免管理端频繁刷新打 DB。
     """
+    cached = _get_cached("health")
+    if cached is not None:
+        return cached
+
     # 缺失重点学科
     no_disciplines = (
         await db.execute(
@@ -552,7 +588,7 @@ async def get_data_health(
             issues[key] = missing
     health_score = max(0, round(100 - score_loss))
 
-    return {
+    payload = {
         "message": "ok",
         "data": {
             "total_universities": uni_total,
@@ -569,11 +605,35 @@ async def get_data_health(
             },
         },
     }
+    _set_cached("health", payload)
+    return payload
+
+
+def _invalidate_stats_cache() -> None:
+    """管理端写入数据后清除统计缓存，确保下次查询拿到最新数据。"""
+    _stats_cache.pop("stats", None)
+    _stats_cache.pop("health", None)
 
 
 # ========== 管理端 CRUD 接口 ==========
 
-admin = APIRouter(prefix="/zhiyuan/admin", tags=["zhiyuan-admin"])
+
+async def _invalidate_cache_after_write(request: Request):
+    """管理端写操作（POST/PUT/DELETE）完成后清除统计缓存。
+
+    GET 请求不清缓存，避免读操作导致缓存频繁失效。
+    使用 yield 依赖：在响应返回后执行清除。
+    """
+    yield
+    if request.method != "GET":
+        _invalidate_stats_cache()
+
+
+admin = APIRouter(
+    prefix="/zhiyuan/admin",
+    tags=["zhiyuan-admin"],
+    dependencies=[Depends(_invalidate_cache_after_write)],
+)
 
 
 # --- 院校管理 ---
@@ -591,6 +651,30 @@ class UniversityCreate(BaseModel):
     master_points: int = Field(default=0, ge=0)
     doctor_points: int = Field(default=0, ge=0)
     key_disciplines: str = ""
+
+    @field_validator("website")
+    @classmethod
+    def _validate_website(cls, v: str) -> str:
+        """website 非空时必须以 http:// 或 https:// 开头，防止脏数据。"""
+        if v and not v.startswith(("http://", "https://")):
+            raise ValueError("website 必须以 http:// 或 https:// 开头")
+        return v
+
+    @field_validator("level")
+    @classmethod
+    def _validate_level(cls, v: str) -> str:
+        """level 限定为已知层次枚举，空字符串表示未设置。"""
+        if v and v not in ("985", "211", "双一流", "普通"):
+            raise ValueError("level 必须为 985/211/双一流/普通 之一")
+        return v
+
+    @field_validator("nature")
+    @classmethod
+    def _validate_nature(cls, v: str) -> str:
+        """nature 限定为公办/民办/中外合作，空字符串表示未设置。"""
+        if v and v not in ("公办", "民办", "中外合作"):
+            raise ValueError("nature 必须为 公办/民办/中外合作 之一")
+        return v
 
 
 @admin.get("/universities")
@@ -749,6 +833,39 @@ class AdmissionScoreCreate(BaseModel):
     avg_score: int = Field(default=0, ge=0, le=750)
     min_rank: int = Field(default=0, ge=0)
     plan_count: int = Field(default=0, ge=0)
+
+    @field_validator("year")
+    @classmethod
+    def _validate_year(cls, v: int) -> int:
+        """年份合理性校验：不能早于 1990，不能晚于当前年份 + 1（允许提前录入下一年计划）。"""
+        from datetime import datetime
+        current_year = datetime.now().year
+        if v < 1990 or v > current_year + 1:
+            raise ValueError(f"年份必须在 1990 ~ {current_year + 1} 之间")
+        return v
+
+    @model_validator(mode="after")
+    def _validate_score_range(self):
+        """分数逻辑校验：max >= avg >= min（0 表示未录入，跳过比较）。"""
+        if (
+            self.max_score > 0
+            and self.min_score > 0
+            and self.max_score < self.min_score
+        ):
+            raise ValueError("max_score 不能小于 min_score")
+        if (
+            self.avg_score > 0
+            and self.min_score > 0
+            and self.avg_score < self.min_score
+        ):
+            raise ValueError("avg_score 不能小于 min_score")
+        if (
+            self.max_score > 0
+            and self.avg_score > 0
+            and self.avg_score > self.max_score
+        ):
+            raise ValueError("avg_score 不能大于 max_score")
+        return self
 
 
 @admin.get("/scores")
