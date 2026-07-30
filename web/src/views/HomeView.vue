@@ -64,6 +64,7 @@
           <aside class="hero-visual reveal-up delay-1">
             <div class="visual-card">
               <div class="visual-glow" aria-hidden="true"></div>
+              <!-- 业务化水印：中心学士帽 + 外围志愿匹配节点 -->
               <svg
                 class="graph-watermark"
                 viewBox="0 0 240 200"
@@ -71,19 +72,31 @@
                 aria-hidden="true"
                 xmlns="http://www.w3.org/2000/svg"
               >
-                <g stroke="currentColor" stroke-width="2">
+                <!-- 匹配连线：以学生为中心，连接分数、院校、专业、计划、政策 -->
+                <g stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
                   <line x1="120" y1="100" x2="48" y2="44" />
                   <line x1="120" y1="100" x2="200" y2="56" />
                   <line x1="120" y1="100" x2="56" y2="156" />
                   <line x1="120" y1="100" x2="180" y2="150" />
-                  <line x1="48" y1="44" x2="200" y2="56" />
+                  <line x1="120" y1="100" x2="120" y2="36" />
                 </g>
+                <!-- 外围节点：志愿匹配的五大数据维度 -->
                 <g fill="currentColor">
-                  <circle cx="120" cy="100" r="11" />
-                  <circle cx="48" cy="44" r="7" />
-                  <circle cx="200" cy="56" r="8" />
-                  <circle cx="56" cy="156" r="6" />
-                  <circle cx="180" cy="150" r="9" />
+                  <circle cx="48" cy="44" r="5" />
+                  <circle cx="200" cy="56" r="5" />
+                  <circle cx="56" cy="156" r="5" />
+                  <circle cx="180" cy="150" r="5" />
+                  <circle cx="120" cy="36" r="5" />
+                </g>
+                <!-- 中心：学士帽（学生本位） -->
+                <g fill="currentColor" transform="translate(120 100)">
+                  <!-- 帽板 -->
+                  <path d="M-22,-4 L0,-14 L22,-4 L0,6 Z" />
+                  <!-- 帽身 -->
+                  <path d="M-10,-2 L-10,8 L10,8 L10,-2 L0,4 Z" opacity="0.85" />
+                  <!-- 流苏 -->
+                  <line x1="20" y1="-3" x2="20" y2="9" stroke="currentColor" stroke-width="1.5" />
+                  <circle cx="20" cy="11" r="2" />
                 </g>
               </svg>
 
@@ -91,7 +104,7 @@
                 <div class="flow-row">
                   <div class="flow-node">
                     <span class="flow-icon"><Workflow :size="22" /></span>
-                    <span class="flow-name">AI 志愿顾问</span>
+                    <span class="flow-name">分数位次</span>
                   </div>
 
                   <div class="flow-link" aria-hidden="true">
@@ -136,11 +149,13 @@
 
                   <div class="flow-node">
                     <span class="flow-icon"><Library :size="22" /></span>
-                    <span class="flow-name">院校招生库</span>
+                    <span class="flow-name">院校专业库</span>
                   </div>
                 </div>
 
-                <p class="flow-caption">AI顾问分析分数位次 · 智愿引擎匹配录取概率 · 院校库提供招生政策参考</p>
+                <p class="flow-caption">
+                  分数位次输入 · 智愿引擎计算录取概率 · 院校专业库提供冲稳保方案
+                </p>
               </div>
             </div>
           </aside>

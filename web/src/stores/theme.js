@@ -65,9 +65,12 @@ export const useThemeStore = defineStore('theme', () => {
     }
   })
 
-  // 切换主题（兼容旧接口：在 light/dark 间切换）
+  // 切换主题（循环切换：light → dark → midnight → light）
   function toggleTheme() {
-    setTheme(currentThemeKey.value === 'light' ? 'dark' : 'light')
+    const order = ['light', 'dark', 'midnight']
+    const currentIdx = order.indexOf(currentThemeKey.value)
+    const nextIdx = (currentIdx + 1) % order.length
+    setTheme(order[nextIdx])
   }
 
   // 设置主题

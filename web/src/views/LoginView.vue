@@ -25,6 +25,10 @@
             <span class="brand-main">{{ brandName }}</span>
           </h1>
         </div>
+        <button type="button" class="back-home-btn" @click="goHome">
+          <ArrowLeft :size="16" />
+          <span>返回首页</span>
+        </button>
       </div>
     </nav>
 
@@ -286,7 +290,8 @@ import {
   User as UserIcon,
   Lock as LockIcon,
   Key as KeyIcon,
-  AlertCircle as ExclamationCircleIcon
+  AlertCircle as ExclamationCircleIcon,
+  ArrowLeft
 } from 'lucide-vue-next'
 import { tryAutoStartOIDC, sanitizeRedirect } from '@/utils/oidcAutoStart'
 import { MIN_PASSWORD_LENGTH } from '@/utils/passwordValidation'
@@ -741,11 +746,33 @@ onUnmounted(() => {
 }
 
 .back-home-btn {
-  color: var(--gray-600);
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  background-color: var(--gray-0);
+  color: var(--gray-700);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    transform 0.2s ease;
+
   &:hover {
+    border-color: var(--main-200);
+    background-color: var(--main-10);
     color: var(--main-color);
-    background-color: transparent;
+    transform: translateX(-2px);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--main-200);
+    outline-offset: 2px;
   }
 }
 
@@ -765,9 +792,24 @@ onUnmounted(() => {
   height: 560px;
   background: var(--gray-0);
   border-radius: 16px;
-  box-shadow: 0 0px 40px var(--shadow-1);
+  box-shadow:
+    0 0 0 1px var(--main-40),
+    0 20px 50px -20px var(--shadow-3),
+    0 40px 80px -40px rgba(3, 80, 101, 0.15);
   display: flex;
   overflow: hidden;
+  animation: cardEnter 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes cardEnter {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .card-side {
@@ -828,11 +870,31 @@ onUnmounted(() => {
   :deep(.ant-input-affix-wrapper) {
     padding: 10px 12px;
     border-radius: 8px;
+    transition:
+      border-color 0.2s ease,
+      box-shadow 0.2s ease;
+
+    &:hover {
+      border-color: var(--main-300);
+    }
+
+    &-focused,
+    &:focus-within {
+      border-color: var(--main-color);
+      box-shadow: 0 0 0 3px var(--main-40);
+    }
   }
   :deep(.ant-btn) {
     height: 44px;
     font-size: 16px;
     border-radius: 8px;
+    transition:
+      transform 0.15s ease,
+      box-shadow 0.2s ease;
+
+    &:active {
+      transform: scale(0.98);
+    }
   }
   :deep(.ant-input-prefix) {
     margin-right: 8px;

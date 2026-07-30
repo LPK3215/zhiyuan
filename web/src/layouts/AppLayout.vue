@@ -144,7 +144,8 @@ const mainList = computed(() => {
       path: '/zhiyuan/admin',
       activePaths: ['/zhiyuan/admin'],
       icon: GraduationCap,
-      activeIcon: GraduationCap
+      activeIcon: GraduationCap,
+      feature: true
     })
   }
 
@@ -334,7 +335,7 @@ provide('settingsModal', {
           :to="item.path"
           v-show="!item.hidden"
           class="nav-item"
-          :class="{ active: isNavItemActive(item) }"
+          :class="{ active: isNavItemActive(item), feature: item.feature }"
           :active-class="item.action ? '' : 'active'"
           @click.stop
         >
@@ -547,6 +548,16 @@ div.header,
     height: @brand-avatar-size;
     border-radius: 6px;
     object-fit: cover;
+    box-shadow:
+      0 0 0 1px var(--main-40),
+      0 2px 6px -2px rgba(3, 80, 101, 0.2);
+    transition: box-shadow 0.2s ease;
+  }
+
+  .brand-link:hover .brand-avatar {
+    box-shadow:
+      0 0 0 1px var(--main-100),
+      0 4px 10px -2px rgba(3, 80, 101, 0.3);
   }
 
   .brand-name {
@@ -661,6 +672,41 @@ div.header,
 
     &.warning {
       color: var(--color-error-500);
+    }
+
+    /* 特色菜单项：核心业务入口（智愿管理） */
+    &.feature {
+      position: relative;
+
+      .icon {
+        color: var(--main-color);
+      }
+
+      &:not(.active) {
+        .nav-text {
+          color: var(--main-800);
+          font-weight: 550;
+        }
+      }
+
+      &::before {
+        content: '';
+        position: absolute;
+        left: -2px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 3px;
+        height: 16px;
+        border-radius: 2px;
+        background: linear-gradient(180deg, var(--main-400), var(--main-600));
+        opacity: 0;
+        transition: opacity 0.2s ease;
+      }
+
+      &:hover::before,
+      &.active::before {
+        opacity: 1;
+      }
     }
 
     &:hover {
