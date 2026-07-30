@@ -1,0 +1,9 @@
+{
+  "items": ["http://localhost:9000/knowledgebases/kb_ccgiybwxdo/upload/test_doc_1785384380037.txt"],
+  "params": {
+    "content_type": "file",
+    "auto_index": true,
+    "content_hashes": {"http://localhost:9000/knowledgebases/kb_ccgiybwxdo/upload/test_doc_1785384380037.txt": "f65f2e8d80b033e42d37db175f68587c3f05aebccf6e7dafd74bb4b8e42a8ed3"},
+    "chunk_preset_id": "general"
+  }
+}
