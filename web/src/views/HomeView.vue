@@ -91,7 +91,7 @@
                 <div class="flow-row">
                   <div class="flow-node">
                     <span class="flow-icon"><Workflow :size="22" /></span>
-                    <span class="flow-name">智能体 Harness</span>
+                    <span class="flow-name">AI 志愿顾问</span>
                   </div>
 
                   <div class="flow-link" aria-hidden="true">
@@ -115,7 +115,7 @@
                       <span class="hub-ring"></span>
                       <Sparkles :size="24" />
                     </span>
-                    <span class="flow-name">RAG 引擎</span>
+                    <span class="flow-name">智愿引擎</span>
                   </div>
 
                   <div class="flow-link" aria-hidden="true">
@@ -136,11 +136,11 @@
 
                   <div class="flow-node">
                     <span class="flow-icon"><Library :size="22" /></span>
-                    <span class="flow-name">知识库</span>
+                    <span class="flow-name">院校招生库</span>
                   </div>
                 </div>
 
-                <p class="flow-caption">智能体发起检索 · 引擎融合向量与图谱 · 召回知识增强生成</p>
+                <p class="flow-caption">AI顾问分析分数位次 · 智愿引擎匹配录取概率 · 院校库提供招生政策参考</p>
               </div>
             </div>
           </aside>
@@ -220,7 +220,7 @@ const startSubtitleCarousel = () => {
 }
 
 const getHeroBadgeText = () => {
-  return '智愿 · 你的 AI 智能体平台'
+  return '智愿 · 高考志愿填报智能顾问'
 }
 
 const stopBadgeTyping = () => {

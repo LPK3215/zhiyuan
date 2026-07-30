@@ -37,15 +37,25 @@
             <template #icon><BookOpen :size="16" /></template>
             <span class="menu-text">文档中心</span>
           </a-menu-item>
-          <a-menu-item key="theme" @click="toggleTheme">
+          <a-sub-menu key="theme">
             <template #icon>
-              <Sun v-if="themeStore.isDark" :size="16" />
-              <Moon v-else :size="16" />
+              <component :is="currentThemeIcon" :size="16" />
             </template>
-            <span class="menu-text">{{
-              themeStore.isDark ? '切换到浅色模式' : '切换到深色模式'
-            }}</span>
-          </a-menu-item>
+            <template #title>
+              <span class="menu-text">主题：{{ currentThemeLabel }}</span>
+            </template>
+            <a-menu-item
+              v-for="opt in themeStore.themeOptions"
+              :key="`theme-${opt.key}`"
+              @click="themeStore.setTheme(opt.key)"
+            >
+              <template #icon>
+                <component :is="themeIconMap[opt.icon]" :size="14" />
+              </template>
+              <span class="menu-text">{{ opt.label }}</span>
+              <Check v-if="themeStore.currentThemeKey === opt.key" :size="14" style="margin-left: auto; color: var(--main-color)" />
+            </a-menu-item>
+          </a-sub-menu>
           <a-menu-divider />
           <a-menu-item v-if="userStore.isSuperAdmin" key="debug" @click="showDebug = true">
             <template #icon><Terminal :size="16" /></template>
@@ -75,7 +85,7 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import DebugComponent from '@/components/DebugComponent.vue'
 import { message } from 'ant-design-vue'
-import { BookOpen, Sun, Moon, LogOut, Settings, Terminal } from 'lucide-vue-next'
+import { BookOpen, Sun, Moon, Stars, Check, LogOut, Settings, Terminal } from 'lucide-vue-next'
 import { useThemeStore } from '@/stores/theme'
 import { generatePixelAvatar } from '@/utils/pixelAvatar'
 import FallbackAvatar from '@/components/common/FallbackAvatar.vue'
@@ -84,6 +94,16 @@ const router = useRouter()
 const userStore = useUserStore()
 const themeStore = useThemeStore()
 const slots = useSlots()
+
+const themeIconMap = { Sun, Moon, Stars }
+const currentThemeLabel = computed(() => {
+  const opt = themeStore.themeOptions.find((o) => o.key === themeStore.currentThemeKey)
+  return opt ? opt.label : '浅色'
+})
+const currentThemeIcon = computed(() => {
+  const opt = themeStore.themeOptions.find((o) => o.key === themeStore.currentThemeKey)
+  return opt ? themeIconMap[opt.icon] : Sun
+})
 
 // 调试面板状态
 const showDebug = ref(false)
@@ -135,9 +155,6 @@ const openDocs = () => {
   // 文档链接暂未配置
 }
 
-const toggleTheme = () => {
-  themeStore.toggleTheme()
-}
 
 // 前往设置页
 const goToSetting = () => {

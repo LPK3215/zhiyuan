@@ -1,4 +1,4 @@
-/* 深色模式 */
+/* 深色模式 - 柔化版（深灰而非纯黑） */
 :root.dark {
   --main-1000: #e1f6fb;
   --main-900: #c4eaf5;
@@ -9,15 +9,15 @@
   --main-400: #3996ae;
   --main-300: #24839a;
   --main-200: #046a82;
-  --main-100: #035065;
-  --main-50: #023944;
-  --main-40: #01151f;
-  --main-30: #010d14;
-  --main-20: #010a0f;
-  --main-10: #00070a;
-  --main-5: #000405;
-  --main-1: #000102;
-  --main-0: #000000;
+  --main-100: #0a4555;
+  --main-50: #073846;
+  --main-40: #152028;
+  --main-30: #121a20;
+  --main-20: #101618;
+  --main-10: #0e1316;
+  --main-5: #0c1114;
+  --main-1: #0a0e11;
+  --main-0: #090c0f;
 
   /* 保留原有的 main 变量 */
   --main-color: #4a9fb8;
@@ -34,12 +34,12 @@
   --gray-400: #979999;
   --gray-300: #697070;
   --gray-200: #4c4d4d;
-  --gray-150: #323333;
-  --gray-100: #1e1f1f;
-  --gray-50: #151616;
-  --gray-25: #0c0d0d;
-  --gray-10: #080808;
-  --gray-0: #030303;
+  --gray-150: #3a3d40;
+  --gray-100: #2a2d30;
+  --gray-50: #222528;
+  --gray-25: #1a1d20;
+  --gray-10: #16191c;
+  --gray-0: #121518;
 
   --color-success-10: #0f1810; /* 成功色-极深 */
   --color-success-50: #162312; /* 成功色-最深 */
@@ -87,7 +87,7 @@
   --chart-palette-9: #c46e9e;
   --chart-palette-10: #7a7a7a;
 
-  --bg-sider: #141414;
+  --bg-sider: #0c1114;
   --color-text: #ffffff;
 
   --dark-98: rgba(255, 255, 255, 0.98);
@@ -117,8 +117,8 @@
   --light-0: rgba(0, 0, 0, 0);
 
   /* Ant Design 兼容变量 - 深色模式 */
-  --color-bg-container: #1f1f1f;
-  --color-bg-elevated: #262626;
+  --color-bg-container: #1a1e22;
+  --color-bg-elevated: #22272c;
   --color-text-secondary: rgba(255, 255, 255, 0.65);
   --color-text-tertiary: rgba(255, 255, 255, 0.45);
 

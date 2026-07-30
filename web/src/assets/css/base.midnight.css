@@ -1,0 +1,146 @@
+/* 午夜蓝模式 - 深蓝灰色调，比标准深色模式更柔和 */
+:root.midnight {
+  --main-1000: #e0eafc;
+  --main-900: #c0cdf0;
+  --main-800: #9fb0e4;
+  --main-700: #7e93d8;
+  --main-600: #5d76cc;
+  --main-500: #4a64b8;
+  --main-400: #3996ae;
+  --main-300: #2a6a9a;
+  --main-200: #1a4a70;
+  --main-100: #0a3556;
+  --main-50: #082a45;
+  --main-40: #0a1a2e;
+  --main-30: #091624;
+  --main-20: #08121e;
+  --main-10: #070f1a;
+  --main-5: #060d16;
+  --main-1: #050b13;
+  --main-0: #040a10;
+
+  --main-color: #5d76cc;
+  --main-bright: #7e93d8;
+
+  --gray-10000: #f0f4ff;
+  --gray-2000: #e8edfa;
+  --gray-1000: #dde4f5;
+  --gray-900: #ccd6ee;
+  --gray-800: #c0ccdf;
+  --gray-700: #a8b5cf;
+  --gray-600: #8a98b8;
+  --gray-500: #6a7898;
+  --gray-400: #4a5878;
+  --gray-300: #3a4868;
+  --gray-200: #2a3858;
+  --gray-150: #1e2a48;
+  --gray-100: #15203e;
+  --gray-50: #101a30;
+  --gray-25: #0c1424;
+  --gray-10: #08101e;
+  --gray-0: #060c18;
+
+  --color-success-10: #0a1810;
+  --color-success-50: #0e2312;
+  --color-success-100: #1a3921;
+  --color-success-500: #52c41a;
+  --color-success-700: #73d13d;
+  --color-success-900: #95de64;
+
+  --color-error-10: #1a0a0b;
+  --color-error-50: #2a1215;
+  --color-error-100: #58181c;
+  --color-error-500: #ff4d4f;
+  --color-error-700: #ff7875;
+  --color-error-900: #ffa39e;
+
+  --color-warning-10: #1a1408;
+  --color-warning-50: #2b2111;
+  --color-warning-100: #614700;
+  --color-warning-500: #faad14;
+  --color-warning-700: #ffc53d;
+  --color-warning-900: #ffd666;
+
+  --color-info-10: #0a0d1a;
+  --color-info-50: #0e1526;
+  --color-info-100: #111d2c;
+  --color-info-500: #3d8fff;
+  --color-info-700: #40a9ff;
+  --color-info-900: #69c0ff;
+
+  --color-accent-10: #08151a;
+  --color-accent-50: #0c2228;
+  --color-accent-100: #103040;
+  --color-accent-500: #13c2c2;
+  --color-accent-700: #36cfc9;
+  --color-accent-900: #5cdbd3;
+
+  --chart-palette-1: var(--main-400);
+  --chart-palette-2: #3ea896;
+  --chart-palette-3: #d6ad37;
+  --chart-palette-4: #cf6666;
+  --chart-palette-5: #8672b4;
+  --chart-palette-6: #529ab8;
+  --chart-palette-7: #d48242;
+  --chart-palette-8: #82b354;
+  --chart-palette-9: #c46e9e;
+  --chart-palette-10: #7a7a7a;
+
+  --bg-sider: #060d16;
+  --color-text: #e0eafc;
+
+  --dark-98: rgba(224, 234, 252, 0.98);
+  --dark-95: rgba(224, 234, 252, 0.95);
+  --dark-90: rgba(224, 234, 252, 0.9);
+  --dark-85: rgba(224, 234, 252, 0.85);
+  --dark-80: rgba(224, 234, 252, 0.8);
+  --dark-75: rgba(224, 234, 252, 0.75);
+  --dark-70: rgba(224, 234, 252, 0.7);
+  --dark-50: rgba(224, 234, 252, 0.5);
+  --dark-25: rgba(224, 234, 252, 0.25);
+  --dark-10: rgba(224, 234, 252, 0.1);
+  --dark-5: rgba(224, 234, 252, 0.05);
+  --dark-0: rgba(224, 234, 252, 0);
+
+  --light-98: rgba(0, 0, 0, 0.98);
+  --light-95: rgba(0, 0, 0, 0.95);
+  --light-90: rgba(0, 0, 0, 0.9);
+  --light-85: rgba(0, 0, 0, 0.85);
+  --light-80: rgba(0, 0, 0, 0.8);
+  --light-75: rgba(0, 0, 0, 0.75);
+  --light-70: rgba(0, 0, 0, 0.7);
+  --light-50: rgba(0, 0, 0, 0.5);
+  --light-25: rgba(0, 0, 0, 0.25);
+  --light-10: rgba(0, 0, 0, 0.1);
+  --light-5: rgba(0, 0, 0, 0.05);
+  --light-0: rgba(0, 0, 0, 0);
+
+  --color-bg-container: #0c1424;
+  --color-bg-elevated: #101a30;
+  --color-text-secondary: rgba(224, 234, 252, 0.65);
+  --color-text-tertiary: rgba(224, 234, 252, 0.45);
+
+  --shadow-0: rgba(93, 118, 204, 0.02);
+  --shadow-1: rgba(93, 118, 204, 0.05);
+  --shadow-2: rgba(93, 118, 204, 0.08);
+  --shadow-3: rgba(93, 118, 204, 0.12);
+  --shadow-4: rgba(93, 118, 204, 0.16);
+  --shadow-5: rgba(93, 118, 204, 0.2);
+
+  --color-trans-light: rgba(6, 12, 24, 0.85);
+  --color-trans-dark: rgba(224, 234, 252, 0.85);
+}
+
+:root.midnight .markmap {
+  --markmap-max-width: 9999px;
+  --markmap-a-color: var(--main-500);
+  --markmap-a-hover-color: var(--main-600);
+  --markmap-code-bg: var(--gray-50);
+  --markmap-code-color: var(--gray-700);
+  --markmap-highlight-bg: var(--color-warning-50);
+  --markmap-table-border: 1px solid currentColor;
+  --markmap-font: 300 16px / 20px sans-serif;
+  --markmap-circle-open-bg: var(--main-0);
+  --markmap-text-color: var(--gray-700);
+  --markmap-highlight-node-bg: var(--color-error-50);
+}
