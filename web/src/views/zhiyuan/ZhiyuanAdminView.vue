@@ -394,6 +394,7 @@
                 show-search
                 :filter-option="filterUniversityOption"
                 :options="universityOptions"
+                :loading="universityOptionsLoading"
                 style="width: 100%"
               />
             </a-form-item>
@@ -477,6 +478,7 @@
                 show-search
                 :filter-option="filterUniversityOption"
                 :options="universityOptions"
+                :loading="universityOptionsLoading"
                 style="width: 100%"
                 @change="onScoreUniversityChange"
               />
@@ -630,6 +632,7 @@
                 show-search
                 :filter-option="filterUniversityOption"
                 :options="universityOptions"
+                :loading="universityOptionsLoading"
                 style="width: 100%"
                 @change="onPlanUniversityChange"
               />
@@ -726,12 +729,20 @@ const filterUniversityOption = (input, option) => {
   return String(label).toLowerCase().includes(input.toLowerCase())
 }
 
+const universityOptionsLoading = ref(false)
+
 async function loadUniversityOptions() {
+  // 如果已经加载过且非空，不重复加载
+  if (universityOptions.value.length > 0) return
+  universityOptionsLoading.value = true
   try {
     const res = await zhiyuanApi.adminListUniversities({ page: 1, size: 500 })
-    universityOptions.value = (res?.items || []).map(u => ({ label: u.name, value: u.id }))
+    const items = res?.items || []
+    universityOptions.value = items.map(u => ({ label: u.name, value: u.id }))
   } catch (e) {
-    console.error('加载院校选项失败', e)
+    console.error('加载院校选项失败:', e?.message || e)
+  } finally {
+    universityOptionsLoading.value = false
   }
 }
 
@@ -981,6 +992,8 @@ function openMajorModal(record) {
   majorState.editing = record || null
   majorState.form = record ? { ...defaultMajorForm(), ...record } : defaultMajorForm()
   majorState.modalVisible = true
+  // 兜底：确保院校选项已加载（防止初始化时失败导致下拉框为空）
+  loadUniversityOptions()
 }
 
 async function submitMajor() {
@@ -1064,6 +1077,8 @@ function openScoreModal(record) {
   scoreState.editing = record || null
   scoreState.form = record ? { ...defaultScoreForm(), ...record } : defaultScoreForm()
   scoreState.modalVisible = true
+  // 兜底：确保院校选项已加载（防止初始化时失败导致下拉框为空）
+  loadUniversityOptions()
   // 编辑时预加载该院校的专业列表
   if (scoreState.form.university_id) {
     loadMajorOptionsForSelect(scoreState.form.university_id, scoreMajorOptions)
@@ -1226,6 +1241,8 @@ function openPlanModal(record) {
   planState.editing = record || null
   planState.form = record ? { ...defaultPlanForm(), ...record } : defaultPlanForm()
   planState.modalVisible = true
+  // 兜底：确保院校选项已加载（防止初始化时失败导致下拉框为空）
+  loadUniversityOptions()
   // 编辑时预加载该院校的专业列表
   if (planState.form.university_id) {
     loadMajorOptionsForSelect(planState.form.university_id, planMajorOptions)

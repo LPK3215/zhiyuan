@@ -500,7 +500,7 @@ async def admin_list_majors(
     university_id: int = Query(default=0),
     keyword: str = Query(default=""),
     page: int = Query(default=1, ge=1),
-    size: int = Query(default=20, ge=1, le=100),
+    size: int = Query(default=20, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
     _admin=Depends(get_admin_user),
 ):
