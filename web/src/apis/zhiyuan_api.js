@@ -41,6 +41,14 @@ export const zhiyuanApi = {
   getDataHealth: () =>
     apiGet('/api/zhiyuan/stats/health', {}, false),
 
+  /** 招生政策文档检索（需登录） */
+  searchPolicy: (data) =>
+    apiPost('/api/zhiyuan/policy/search', data),
+
+  /** 招生政策常见问题建议（需登录） */
+  getPolicySuggestions: () =>
+    apiGet('/api/zhiyuan/policy/suggestions'),
+
   /** 搜索院校 */
   searchUniversities: (params = {}) =>
 apiGet(`/api/zhiyuan/universities${buildQueryString(params)}`),

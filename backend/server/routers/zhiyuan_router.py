@@ -408,6 +408,115 @@ async def check_subject(
     return {"message": "ok", "data": results}
 
 
+# ========== 招生政策文档检索 ==========
+
+# 政策知识库名称候选：上传时可能使用 zhaoShengZhengCe 或中文名
+_POLICY_KB_NAME_KEYWORDS = ("zhaoShengZhengCe", "zhaoSheng", "招生政策", "招生", "政策")
+_POLICY_SEARCH_CACHE: dict[str, tuple[float, Any]] = {}
+_POLICY_SEARCH_CACHE_TTL = 60
+
+
+class PolicySearchRequest(BaseModel):
+    """招生政策检索请求。"""
+    question: str = Field(..., min_length=2, max_length=500, description="用户问题")
+    top_k: int = Field(default=5, ge=1, le=10, description="返回结果数量")
+
+
+async def _find_policy_kb_id() -> tuple[str | None, str | None]:
+    """查找招生政策知识库的 kb_id 和名称。
+
+    遍历所有知识库，匹配名称中包含政策相关关键词的第一个。
+    返回 (kb_id, kb_name)，未找到返回 (None, None)。
+    """
+    from yuxi.knowledge.manager import knowledge_base
+
+    try:
+        all_dbs = await knowledge_base.get_databases()
+    except Exception as e:
+        return None, None
+
+    for kb in all_dbs.get("databases", []):
+        name = (kb.get("name") or "") .strip()
+        name_lower = name.lower()
+        for kw in _POLICY_KB_NAME_KEYWORDS:
+            if kw.lower() in name_lower:
+                return kb.get("kb_id"), name
+    return None, None
+
+
+@zhiyuan.post("/policy/search")
+async def search_admission_policies(
+    body: PolicySearchRequest,
+    _user=Depends(get_required_user),
+):
+    """招生政策文档检索（普通用户权限）。
+
+    通过知识库语义检索招生政策文档片段，返回最相关的 top_k 个片段。
+    不依赖 LLM 生成回答，仅返回原文档片段，确保信息可追溯。
+    """
+    from yuxi.knowledge.manager import knowledge_base
+
+    kb_id, kb_name = await _find_policy_kb_id()
+    if not kb_id:
+        raise HTTPException(
+            status_code=404,
+            detail="招生政策知识库未找到，请联系管理员上传政策文档",
+        )
+
+    try:
+        chunks = await knowledge_base.aquery(body.question, kb_id=kb_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"政策检索失败: {e}")
+
+    if not isinstance(chunks, list):
+        chunks = []
+
+    # 截断到 top_k
+    chunks = chunks[: body.top_k]
+
+    # 归一化输出：仅保留必要字段，避免泄露内部元数据
+    results = []
+    for c in chunks:
+        if not isinstance(c, dict):
+            continue
+        results.append({
+            "content": c.get("content") or c.get("text") or "",
+            "source": c.get("source") or c.get("filename") or c.get("document_name") or "",
+            "score": c.get("score") or c.get("similarity") or 0,
+            "page": c.get("page"),
+        })
+
+    return {
+        "message": "ok",
+        "data": {
+            "kb_name": kb_name,
+            "results": results,
+            "total": len(results),
+        },
+    }
+
+
+@zhiyuan.get("/policy/suggestions")
+async def get_policy_suggestions(
+    _user=Depends(get_required_user),
+):
+    """招生政策常见问题建议（静态预设）。
+
+    返回一组常见问题，供前端展示为快捷入口，引导用户提问。
+    """
+    suggestions = [
+        {"q": "2024年高考志愿填报有哪些新变化？", "category": "政策动态"},
+        {"q": "平行志愿的投档规则是什么？", "category": "投档规则"},
+        {"q": "什么是专业级差？如何规避？", "category": "专业录取"},
+        {"q": "提前批有哪些招生类型？", "category": "批次安排"},
+        {"q": "选科要求如何影响志愿填报？", "category": "选科要求"},
+        {"q": "专项计划招生有哪些类型？", "category": "特殊招生"},
+        {"q": "艺术类、体育类考生如何填报志愿？", "category": "艺体招生"},
+        {"q": "征集志愿是什么？什么时候进行？", "category": "征集志愿"},
+    ]
+    return {"message": "ok", "data": suggestions}
+
+
 @zhiyuan.get("/stats")
 async def get_public_stats(
     db: AsyncSession = Depends(get_db),

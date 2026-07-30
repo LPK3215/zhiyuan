@@ -168,6 +168,12 @@ const router = createRouter({
           meta: { keepAlive: false, requiresAuth: true }
         },
         {
+          path: 'policy',
+          name: 'ZhiyuanPolicy',
+          component: () => import('../views/zhiyuan/PolicySearch.vue'),
+          meta: { keepAlive: false, requiresAuth: true }
+        },
+        {
           path: 'admin',
           name: 'ZhiyuanAdmin',
           component: () => import('../views/zhiyuan/ZhiyuanAdminView.vue'),

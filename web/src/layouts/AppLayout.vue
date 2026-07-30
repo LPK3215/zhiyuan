@@ -14,7 +14,8 @@ import {
   Search,
   Network,
   MapPin,
-  FileText
+  FileText,
+  BookOpen
 } from 'lucide-vue-next'
 
 import { useConfigStore } from '@/stores/config'
@@ -164,6 +165,14 @@ const mainList = computed(() => {
     activePaths: ['/zhiyuan/graph'],
     icon: Network,
     activeIcon: Network
+  })
+
+  items.push({
+    name: '招生政策',
+    path: '/zhiyuan/policy',
+    activePaths: ['/zhiyuan/policy'],
+    icon: BookOpen,
+    activeIcon: BookOpen
   })
 
   if (userStore.isAdmin) {
