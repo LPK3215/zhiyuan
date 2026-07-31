@@ -21,7 +21,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -124,6 +124,17 @@ class ScoreCreate(BaseModel):
 
     validate_province = field_validator("province")(validate_province)
     validate_subject_type = field_validator("subject_type")(validate_subject_type)
+
+    @model_validator(mode="after")
+    def _check_score_logic(self):
+        """校验分数逻辑：当三个分数字段均非零时，min_score <= avg_score <= max_score。"""
+        if self.min_score and self.avg_score and self.max_score:
+            if not (self.min_score <= self.avg_score <= self.max_score):
+                raise ValueError(
+                    f"分数逻辑错误：需满足 min_score({self.min_score}) <= "
+                    f"avg_score({self.avg_score}) <= max_score({self.max_score})"
+                )
+        return self
 
 
 class ScoreUpdate(ScoreCreate):
@@ -740,7 +751,10 @@ async def admin_delete_rule(
 
     result = await session.execute(stmt)
     if result.rowcount == 0:
-        raise HTTPException(status_code=404, detail=f"未找到省份规则: {province}")
+        detail = f"未找到省份规则: {province}"
+        if year > 0:
+            detail = f"未找到省份规则: {province} {year}年"
+        raise HTTPException(status_code=404, detail=detail)
 
     await session.commit()
     zhiyuan_repository.invalidate_cache_after_write()

@@ -2,7 +2,7 @@
 
 > **维护规则**：本文件是唯一的问题追踪源。每次发现新问题追加到对应分类；每次修复后立即更新状态（`未修复` → `已修复`）。禁止在其他地方维护重复清单。
 
-> **最后更新**：2026-07-31（第三轮全量扫描完成 — 8 个新问题全部修复）
+> **最后更新**：2026-07-31（第四轮全量扫描完成 — 发现 6 个新问题，全部修复）
 
 ---
 
@@ -11,10 +11,10 @@
 | 分类 | 未修复 | 已修复 | 合计 |
 |------|--------|--------|------|
 | P0 致命（阻断功能） | 0 | 6 | 6 |
-| P1 严重（功能错误） | 0 | 12 | 12 |
-| P2 中等（数据不一致） | 0 | 12 | 12 |
-| P3 低（代码清理/优化） | 0 | 12 | 12 |
-| **合计** | **0** | **42** | **42** |
+| P1 严重（功能错误） | 0 | 13 | 13 |
+| P2 中等（数据不一致） | 0 | 13 | 13 |
+| P3 低（代码清理/优化） | 0 | 16 | 16 |
+| **合计** | **0** | **48** | **48** |
 
 > 🎉 全部问题已修复。后续发现的新问题将追加到对应分类。
 
@@ -132,6 +132,12 @@
 - **描述**：删除规则的端点先执行 `commit()` + `invalidate_cache_after_write()`，然后才检查 `result.rowcount == 0` 并抛 404。虽然空删除的 commit 无害，但缓存被无谓清除，且 404 在 commit 后抛出不符合事务语义。
 - **修复内容**：将 rowcount 检查移到 commit 之前，先判断是否有行被删除，无则直接抛 404，有则 commit + 清缓存。
 
+### R4-P1-1 前端 `PROVINCES` / `UNIVERSITY_TYPES` 列表与后端白名单不一致
+- **状态**：✅ 已修复
+- **文件**：`web/src/constants/zhiyuanOptions.js`
+- **描述**：前端 `PROVINCES` 仅含 10 个省份，后端 `_VALID_PROVINCES` 含 31 个；前端 `UNIVERSITY_TYPES` 仅含 5 个类型，后端 `_VALID_TYPES` 含 12 个。Admin 面板的省份/类型下拉框使用前端列表，导致管理员无法为其他 21 个省份（如天津、河北、山西等）或 7 种院校类型（如农林、语言、政法等）添加/管理数据。用户端页面同样无法筛选这些省份/类型。
+- **修复内容**：将前端 `PROVINCES` 扩展为与后端一致的 31 个省份；将 `UNIVERSITY_TYPES` 扩展为与后端一致的 12 个类型。
+
 ---
 
 ## 四、P2 中等问题（数据不一致）
@@ -198,6 +204,12 @@
 - **描述**：工具层 `recommend_majors` 手动实现了 get_score_rank → generate_plan → 提取专业 → 兴趣过滤的完整流程，与 `zhiyuan_repository.recommend_majors()` 完全重复。两份代码独立维护易产生不一致。
 - **修复内容**：删除工具层的重复逻辑，改为直接调用 `zhiyuan_repository.recommend_majors()`。
 
+### R4-P2-1 `UniversityBrowse.vue` 分数趋势图使用 `min_score` 而非 `avg_score`
+- **状态**：✅ 已修复
+- **文件**：`web/src/views/zhiyuan/UniversityBrowse.vue`
+- **描述**：院校详情弹窗的"历年录取分数趋势"柱状图，标题和标签（`avgScore`）暗示展示平均分，但实际代码使用 `s.min_score` 进行聚合计算。后端 API 已返回 `avg_score` 字段，应直接使用。
+- **修复内容**：将 `if (s.min_score) byYear[y].scores.push(s.min_score)` 改为优先使用 `s.avg_score`，回退到 `s.min_score`。
+
 ---
 
 ## 五、P3 低优先级（代码清理/优化）
@@ -261,6 +273,30 @@
 - **文件**：`backend/package/yuxi/repositories/zhiyuan_models.py`
 - **描述**：`name` 列仅有 `index=True`，唯一性校验完全依赖应用层 `_check_university_name_unique`。在并发请求下存在竞态条件，可能插入重复校名。
 - **修复内容**：添加 `unique=True` 到 `University.name` 列定义。
+
+### R4-P3-1 `admin_delete_rule` 的 404 错误信息不包含年份
+- **状态**：✅ 已修复
+- **文件**：`backend/server/routers/zhiyuan_admin_router.py`
+- **描述**：当按特定年份删除省份规则失败时（`year > 0`），404 错误信息只显示省份不显示年份（`未找到省份规则: {province}`），不利于排查。
+- **修复内容**：当 `year > 0` 时，错误信息改为 `未找到省份规则: {province} {year}年`；`year == 0` 时保持原信息。
+
+### R4-P3-2 `search_policy` 工具层与路由层 `top_k` 上限不一致
+- **状态**：✅ 已修复
+- **文件**：`backend/package/yuxi/agents/toolkits/buildin/zhiyuan_tools.py`
+- **描述**：路由层 `PolicySearchRequest.top_k` 允许 1-20，但工具层 `search_policy` 硬编码 `min(max(1, top_k), 10)` 限制为 1-10。两处上限不一致，API 消费者可能困惑。
+- **修复内容**：将工具层的 `top_k` 上限从 10 调整为 20，与路由层一致。
+
+### R4-P3-3 `ScoreCreate` / `ScoreUpdate` 缺少分数逻辑校验
+- **状态**：✅ 已修复
+- **文件**：`backend/server/routers/zhiyuan_admin_router.py`
+- **描述**：Pydantic 模型只校验各分数字段在 0-750 范围内，但未校验 `min_score <= avg_score <= max_score` 的逻辑关系。管理员可能存入如 `min_score=600, avg_score=400` 的不合理数据。
+- **修复内容**：在 `ScoreCreate` 中添加 `model_validator` 校验：当三个分数字段均非零时，检查 `min_score <= avg_score <= max_score`。
+
+### R4-P3-4 `ZhiyuanAdminView.vue` "导入Excel" 按钮标签具有误导性
+- **状态**：✅ 已修复
+- **文件**：`web/src/views/zhiyuan/UniversityBrowse.vue`
+- **描述**：Admin 面板的专业和分数管理 Tab 中有"导入Excel"按钮，但点击后仅显示"文件导入功能尚未上线"提示。按钮标签"导入Excel"暗示已有文件导入功能，具有误导性。
+- **修复内容**：将按钮标签从"导入Excel"改为"批量导入"，与实际支持的 JSON 批量导入功能对应。
 
 ---
 
@@ -350,3 +386,13 @@
 | `backend/package/yuxi/repositories/zhiyuan_models.py` | University.name 添加 unique=True 约束 |
 | `web/src/views/zhiyuan/ZhiyuanAdminView.vue` | 规则表格 rowKey 改为 id；添加缓存失效逻辑；清理 handleImport 死代码 |
 | `web/src/apis/zhiyuan_api.js` | 移除 adminImportScoresFile/adminImportMajorsFile 死函数 |
+
+### 第四批修复（R4 全量扫描 — 6 个问题）
+
+#### 修改文件
+| 文件 | 修改内容 |
+|------|----------|
+| `web/src/constants/zhiyuanOptions.js` | PROVINCES 扩展为 31 个省份；UNIVERSITY_TYPES 扩展为 12 个类型 |
+| `web/src/views/zhiyuan/UniversityBrowse.vue` | 分数趋势图改用 avg_score；导入按钮标签改为"批量导入" |
+| `backend/server/routers/zhiyuan_admin_router.py` | admin_delete_rule 错误信息含年份；ScoreCreate 添加分数逻辑校验 |
+| `backend/package/yuxi/agents/toolkits/buildin/zhiyuan_tools.py` | search_policy top_k 上限从 10 调整为 20 |

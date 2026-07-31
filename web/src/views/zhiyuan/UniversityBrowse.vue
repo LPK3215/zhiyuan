@@ -170,7 +170,8 @@ const scoreTrend = computed(() => {
     const y = s.year
     if (!y) return
     if (!byYear[y]) byYear[y] = { year: y, scores: [], provinces: new Set() }
-    if (s.min_score) byYear[y].scores.push(s.min_score)
+    const scoreVal = s.avg_score || s.min_score
+    if (scoreVal) byYear[y].scores.push(scoreVal)
     if (s.province) byYear[y].provinces.add(s.province)
   })
   const trend = Object.values(byYear).sort((a, b) => a.year - b.year)

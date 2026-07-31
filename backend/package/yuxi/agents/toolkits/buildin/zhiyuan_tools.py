@@ -430,7 +430,7 @@ async def search_policy(
             result = await zhiyuan_repository.search_policy(
                 session,
                 question=question.strip(),
-                top_k=min(max(1, top_k), 10),
+                top_k=min(max(1, top_k), 20),
             )
         if result.get("total", 0) == 0:
             q_display = question[:30] + ("..." if len(question) > 30 else "")

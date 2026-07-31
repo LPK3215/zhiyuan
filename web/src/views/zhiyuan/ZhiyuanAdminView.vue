@@ -117,7 +117,7 @@
           />
           <a-button type="primary" @click="openMajorModal(null)">新增专业</a-button>
           <a-button :loading="importState.importing && importState.type === 'major'" @click="openImportDialog('major')">
-            导入Excel
+            批量导入
           </a-button>
         </div>
         <a-table
@@ -187,7 +187,7 @@
           <a-button type="primary" @click="onScoreSearch">查询</a-button>
           <a-button type="primary" @click="openScoreModal(null)">新增分数</a-button>
           <a-button :loading="importState.importing && importState.type === 'score'" @click="openImportDialog('score')">
-            导入Excel
+            批量导入
           </a-button>
         </div>
         <a-table
