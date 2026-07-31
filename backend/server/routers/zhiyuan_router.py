@@ -28,6 +28,8 @@ from yuxi.repositories.zhiyuan_repository import (
     DataNotFoundError,
     InvalidParameterError,
     RepositoryError,
+    validate_province,
+    validate_subject_type,
     zhiyuan_repository,
 )
 
@@ -52,28 +54,10 @@ MAX_PAGE_LIMIT: int = 200
 PLAN_CATEGORIES: dict[str, str] = {"rush": "冲", "stable": "稳", "safe": "保"}
 
 # ---------------------------------------------------------------------------
-# 共享参数校验（避免 5 个 Request Model 中重复定义）
+# 共享参数校验（从仓库层统一导入，避免重复定义）
 # ---------------------------------------------------------------------------
 
-
-def _validate_province(v: str) -> str:
-    """省份白名单校验（空串放行，配合可选字段）。"""
-    from yuxi.repositories.zhiyuan_repository import _VALID_PROVINCES
-    if not v:
-        return v
-    if v not in _VALID_PROVINCES:
-        raise ValueError(f"非法省份: {v}")
-    return v
-
-
-def _validate_subject_type(v: str) -> str:
-    """科类白名单校验（空串放行，配合可选字段）。"""
-    from yuxi.repositories.zhiyuan_repository import _VALID_SUBJECT_TYPES
-    if not v:
-        return v
-    if v not in _VALID_SUBJECT_TYPES:
-        raise ValueError(f"非法科类: {v}")
-    return v
+# validate_province / validate_subject_type 由 yuxi.repositories.zhiyuan_repository 提供
 
 
 # ---------------------------------------------------------------------------
@@ -89,8 +73,8 @@ class PlanGenerateRequest(BaseModel):
     subject_type: str = Field(..., min_length=1, description="科类")
     subject_combination: str = Field(default="", description="选科组合")
 
-    validate_province = field_validator("province")(_validate_province)
-    validate_subject_type = field_validator("subject_type")(_validate_subject_type)
+    validate_province = field_validator("province")(validate_province)
+    validate_subject_type = field_validator("subject_type")(validate_subject_type)
 
 
 class ScoreRankRequest(BaseModel):
@@ -99,8 +83,8 @@ class ScoreRankRequest(BaseModel):
     province: str = Field(..., min_length=1, description="省份")
     subject_type: str = Field(..., min_length=1, description="科类")
 
-    validate_province = field_validator("province")(_validate_province)
-    validate_subject_type = field_validator("subject_type")(_validate_subject_type)
+    validate_province = field_validator("province")(validate_province)
+    validate_subject_type = field_validator("subject_type")(validate_subject_type)
 
 
 class UniversityQueryParams(BaseModel):
@@ -134,8 +118,8 @@ class CompareRequest(BaseModel):
     province: str = Field(..., min_length=1, description="省份")
     subject_type: str = Field(..., min_length=1, description="科类")
 
-    validate_province = field_validator("province")(_validate_province)
-    validate_subject_type = field_validator("subject_type")(_validate_subject_type)
+    validate_province = field_validator("province")(validate_province)
+    validate_subject_type = field_validator("subject_type")(validate_subject_type)
 
 
 class AdmissionQueryRequest(BaseModel):
@@ -144,8 +128,8 @@ class AdmissionQueryRequest(BaseModel):
     province: str = Field(..., min_length=1, description="省份")
     subject_type: str = Field(..., min_length=1, description="科类")
 
-    validate_province = field_validator("province")(_validate_province)
-    validate_subject_type = field_validator("subject_type")(_validate_subject_type)
+    validate_province = field_validator("province")(validate_province)
+    validate_subject_type = field_validator("subject_type")(validate_subject_type)
 
 
 class ScoreQueryRequest(BaseModel):
@@ -155,8 +139,8 @@ class ScoreQueryRequest(BaseModel):
     subject_type: str = Field(default="", description="科类（可空）")
     years: int = Field(default=3, ge=1, le=5, description="年份数")
 
-    validate_province = field_validator("province")(_validate_province)
-    validate_subject_type = field_validator("subject_type")(_validate_subject_type)
+    validate_province = field_validator("province")(validate_province)
+    validate_subject_type = field_validator("subject_type")(validate_subject_type)
 
 
 class RecommendRequest(BaseModel):
@@ -166,8 +150,8 @@ class RecommendRequest(BaseModel):
     subject_type: str = Field(..., min_length=1, description="科类")
     interests: str = Field(default="", description="兴趣方向（如'计算机'、'医学'）")
 
-    validate_province = field_validator("province")(_validate_province)
-    validate_subject_type = field_validator("subject_type")(_validate_subject_type)
+    validate_province = field_validator("province")(validate_province)
+    validate_subject_type = field_validator("subject_type")(validate_subject_type)
 
 
 class CompareMajorsRequest(BaseModel):

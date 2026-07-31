@@ -662,8 +662,9 @@ async def recommend_majors(
                     if interest_lower in m["major_name"].lower()
                 ]
                 if matched:
+                    matched_ids = {id(m) for m in matched}
                     all_majors = matched + [
-                        m for m in all_majors if m not in matched
+                        m for m in all_majors if id(m) not in matched_ids
                     ]
 
             return _success({

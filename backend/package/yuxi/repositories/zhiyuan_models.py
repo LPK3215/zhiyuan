@@ -8,6 +8,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import declarative_base
 
@@ -122,7 +123,7 @@ class PlanScoreMixin:
     major_id = Column(Integer, default=0, index=True)  # 0表示院校整体
     province = Column(String(50), nullable=False, index=True)
     year = Column(Integer, nullable=False, index=True)
-    subject_type = Column(String(50), default="")  # 理科/文科/物理类/历史类/综合改革
+    subject_type = Column(String(50), default="")  # 理科/文科/物理类/历史类/综合
     batch = Column(String(50), default="本科一批")  # 批次
     plan_count = Column(Integer, default=0)  # 招生人数
 
@@ -194,9 +195,12 @@ class ProvinceRule(Base):
     """省份填报规则"""
 
     __tablename__ = "zhiyuan_province_rules"
+    __table_args__ = (
+        UniqueConstraint("province", "year", name="uq_province_rule_year"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    province = Column(String(50), nullable=False, unique=True)
+    province = Column(String(50), nullable=False, index=True)
     year = Column(Integer, nullable=False)
     mode = Column(String(50), default="")  # 平行志愿/顺序志愿
     batch_count = Column(Integer, default=0)  # 可填志愿数

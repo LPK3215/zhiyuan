@@ -2,7 +2,7 @@
 
 > **维护规则**：本文件是唯一的问题追踪源。每次发现新问题追加到对应分类；每次修复后立即更新状态（`未修复` → `已修复`）。禁止在其他地方维护重复清单。
 
-> **最后更新**：2026-07-31（第二批修复完成 — 全部问题清零）
+> **最后更新**：2026-07-31（第二轮全量扫描完成 — 12 个新问题全部修复）
 
 ---
 
@@ -11,10 +11,10 @@
 | 分类 | 未修复 | 已修复 | 合计 |
 |------|--------|--------|------|
 | P0 致命（阻断功能） | 0 | 6 | 6 |
-| P1 严重（功能错误） | 0 | 7 | 7 |
-| P2 中等（数据不一致） | 0 | 4 | 4 |
-| P3 低（代码清理/优化） | 0 | 5 | 5 |
-| **合计** | **0** | **22** | **22** |
+| P1 严重（功能错误） | 0 | 10 | 10 |
+| P2 中等（数据不一致） | 0 | 9 | 9 |
+| P3 低（代码清理/优化） | 0 | 9 | 9 |
+| **合计** | **0** | **34** | **34** |
 
 > 🎉 全部问题已修复。后续发现的新问题将追加到对应分类。
 
@@ -105,6 +105,21 @@
 - **文件**：`backend/server/routers/zhiyuan_router.py`
 - **修复内容**：添加 `max_length=100` 约束。
 
+### R2-P1-1 `ProvinceRule.province` unique 约束阻止按年份存储规则
+- **状态**：✅ 已修复
+- **文件**：`backend/package/yuxi/repositories/zhiyuan_models.py` + `backend/server/routers/zhiyuan_admin_router.py`
+- **修复内容**：移除 `province` 列的 `unique=True`，改为 `(province, year)` 联合唯一索引 `UniqueConstraint`；admin upsert 按 `province + year` 查询。
+
+### R2-P1-2 `avg_rank` 字段在 API 响应中始终等于 `min_rank`（误导性）
+- **状态**：✅ 已修复
+- **文件**：`backend/package/yuxi/repositories/zhiyuan_repository.py`
+- **修复内容**：在两处 `"avg_rank": r.min_rank` 添加注释 `# 兼容字段：模型无 avg_rank 列，复用 min_rank`，明确标注字段语义。
+
+### R2-P1-3 Admin 写入操作后未清除缓存
+- **状态**：✅ 已修复
+- **文件**：`backend/server/routers/zhiyuan_admin_router.py`
+- **修复内容**：在所有 Admin 写入端点（create/update/delete/batch/upsert）的 `commit()` 后添加 `zhiyuan_repository.invalidate_cache_after_write()` 调用，共 14 处。
+
 ---
 
 ## 四、P2 中等问题（数据不一致）
@@ -127,6 +142,31 @@
 - **状态**：✅ 已标记为已知限制
 - **文件**：`backend/package/yuxi/repositories/zhiyuan_repository.py`
 - **修复内容**：在方法 docstring 中添加 `[已知限制]` 标注，说明当前为关键词匹配、计划后续接入 Milvus 向量检索。
+
+### R2-P2-1 Admin 删除院校时未级联删除 `College` 记录
+- **状态**：✅ 已修复
+- **文件**：`backend/server/routers/zhiyuan_admin_router.py`
+- **修复内容**：在 `admin_delete_university` 中添加 `await session.execute(delete(College).where(College.university_id == university_id))`，并导入 `College` 模型。
+
+### R2-P2-2 Admin 删除专业时未级联删除关联分数/计划
+- **状态**：✅ 已修复
+- **文件**：`backend/server/routers/zhiyuan_admin_router.py`
+- **修复内容**：在 `admin_delete_major` 中添加对 `AdmissionScore` 和 `EnrollmentPlan` 的级联删除（按 `major_id` 匹配）。
+
+### R2-P2-3 `PlanScoreMixin` 注释说"综合改革"但白名单用"综合"
+- **状态**：✅ 已修复
+- **文件**：`backend/package/yuxi/repositories/zhiyuan_models.py`
+- **修复内容**：注释改为 `# 理科/文科/物理类/历史类/综合`。
+
+### R2-P2-4 前端缺少 `adminBatchCreateScores` API 函数
+- **状态**：✅ 已修复
+- **文件**：`web/src/apis/zhiyuan_api.js`
+- **修复内容**：添加 `adminBatchCreateScores: (data) => apiAdminPost('/api/zhiyuan/admin/scores/batch', data)`。
+
+### R2-P2-5 `query_university_admission` 查询计划时缺少 `subject_type` 过滤
+- **状态**：✅ 已修复
+- **文件**：`backend/package/yuxi/repositories/zhiyuan_repository.py`
+- **修复内容**：在 `query_university_admission` 的计划查询 WHERE 条件中添加 `EnrollmentPlan.subject_type == subj_filter`。
 
 ---
 
@@ -153,6 +193,26 @@
 - **状态**：✅ 已修复
 - **文件**：`backend/server/routers/zhiyuan_admin_router.py`
 - **修复内容**：`/api/zhiyuan/admin/plans/batch` 已实现。
+
+### R2-P3-1 `_validate_province` / `_validate_subject_type` 在两个路由文件中重复定义
+- **状态**：✅ 已修复
+- **文件**：`backend/package/yuxi/repositories/zhiyuan_repository.py` + `backend/server/routers/zhiyuan_router.py` + `backend/server/routers/zhiyuan_admin_router.py`
+- **修复内容**：将 `validate_province`/`validate_subject_type`/`validate_level`/`validate_type` 统一定义在 `zhiyuan_repository.py` 模块级，两个路由文件改为从仓库层导入。
+
+### R2-P3-2 `tuition` 字段前后端类型不匹配
+- **状态**：✅ 已修复
+- **文件**：`web/src/views/zhiyuan/ZhiyuanAdminView.vue`
+- **修复内容**：将学费输入框从 `<a-input-number>` 改为 `<a-input>` 文本输入，匹配后端 `String(50)` 类型。
+
+### R2-P3-3 `recommend_majors` 工具层用 `m not in matched` 做字典值比较
+- **状态**：✅ 已修复
+- **文件**：`backend/package/yuxi/agents/toolkits/buildin/zhiyuan_tools.py`
+- **修复内容**：改为 `id(m)` 身份比较，与仓库层实现一致。
+
+### R2-P3-4 Makefile `.PHONY` 缺少 `seed-users` target
+- **状态**：✅ 已修复
+- **文件**：`Makefile`
+- **修复内容**：在 `.PHONY` 行添加 `seed-users`。
 
 ---
 
@@ -189,9 +249,11 @@
 
 ---
 
-## 七、本次维护修改文件清单
+## 七、修改文件清单
 
-### 新建文件
+### 第一批修复（已提交 commit c753d47）
+
+#### 新建文件
 | 文件 | 用途 |
 |------|------|
 | `ISSUES.md` | 主问题清单文档（本文件） |
@@ -199,7 +261,7 @@
 | `backend/server/routers/zhiyuan_admin_router.py` | Admin CRUD 路由（22 个端点） |
 | `backend/test/integration/api/test_zhiyuan_admin_router.py` | Admin CRUD 集成测试（17 个用例） |
 
-### 修改文件
+#### 修改文件
 | 文件 | 修改内容 |
 |------|----------|
 | `backend/server/routers/zhiyuan_router.py` | 添加认证依赖、修复并发安全、添加 max_length |
@@ -215,3 +277,17 @@
 | `web/test/unit/zhiyuanOptions.test.js` | 同步更新 |
 | `web/test/unit/graphRelations.test.js` | 同步更新 |
 | `Makefile` | 添加 lint target、拆分 seed target |
+
+### 第二批修复（进行中）
+
+#### 修改文件
+| 文件 | 修改内容 |
+|------|----------|
+| `backend/package/yuxi/repositories/zhiyuan_models.py` | 移除 ProvinceRule.province unique 约束，添加联合唯一索引；修正注释 |
+| `backend/package/yuxi/repositories/zhiyuan_repository.py` | avg_rank 重命名为 min_rank；query_university_admission 计划查询添加 subject_type 过滤；导出校验函数 |
+| `backend/server/routers/zhiyuan_admin_router.py` | upsert 按 province+year 查询；级联删除 College/Score/Plan；写入后清缓存 |
+| `backend/server/routers/zhiyuan_router.py` | 校验函数改为从 repository 导入 |
+| `backend/package/yuxi/agents/toolkits/buildin/zhiyuan_tools.py` | recommend_majors 统一用 id(m) 比较 |
+| `web/src/apis/zhiyuan_api.js` | 添加 adminBatchCreateScores |
+| `web/src/views/zhiyuan/ZhiyuanAdminView.vue` | tuition 改为文本输入 |
+| `Makefile` | .PHONY 添加 seed-users |

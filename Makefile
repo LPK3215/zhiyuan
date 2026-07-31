@@ -1,5 +1,5 @@
 
-.PHONY: up up-lite down logs lint format seed reset seed-zhiyuan
+.PHONY: up up-lite down logs lint format seed reset seed-users seed-zhiyuan
 
 PYTEST_ARGS ?=
 BACKEND_PYTHON ?= $(shell cat backend/.python-version)

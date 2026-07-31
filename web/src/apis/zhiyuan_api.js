@@ -181,6 +181,10 @@ export const zhiyuanApi = {
   adminBatchCreateMajors: (data) =>
     apiAdminPost('/api/zhiyuan/admin/majors/batch', data),
 
+  /** 批量导入分数（JSON 数组） */
+  adminBatchCreateScores: (data) =>
+    apiAdminPost('/api/zhiyuan/admin/scores/batch', data),
+
   /** 批量导入计划（JSON 数组） */
   adminBatchCreatePlans: (data) =>
     apiAdminPost('/api/zhiyuan/admin/plans/batch', data),

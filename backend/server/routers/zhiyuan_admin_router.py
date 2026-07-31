@@ -28,16 +28,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.utils.auth_middleware import get_db as get_db_session, get_admin_user
 from yuxi.repositories.zhiyuan_models import (
     AdmissionScore,
+    College,
     EnrollmentPlan,
     Major,
     ProvinceRule,
     University,
 )
 from yuxi.repositories.zhiyuan_repository import (
-    _VALID_LEVELS,
-    _VALID_PROVINCES,
-    _VALID_SUBJECT_TYPES,
-    _VALID_TYPES,
+    validate_level,
+    validate_province,
+    validate_subject_type,
+    validate_type,
+    zhiyuan_repository,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,37 +63,8 @@ BATCH_MAX = 1000
 # 请求模型
 # ---------------------------------------------------------------------------
 
-
-def _validate_province(v: str) -> str:
-    if not v:
-        return v
-    if v not in _VALID_PROVINCES:
-        raise ValueError(f"非法省份: {v}")
-    return v
-
-
-def _validate_subject_type(v: str) -> str:
-    if not v:
-        return v
-    if v not in _VALID_SUBJECT_TYPES:
-        raise ValueError(f"非法科类: {v}")
-    return v
-
-
-def _validate_level(v: str) -> str:
-    if not v:
-        return v
-    if v not in _VALID_LEVELS:
-        raise ValueError(f"非法层次: {v}")
-    return v
-
-
-def _validate_type(v: str) -> str:
-    if not v:
-        return v
-    if v not in _VALID_TYPES:
-        raise ValueError(f"非法类型: {v}")
-    return v
+# 校验函数由 yuxi.repositories.zhiyuan_repository 统一提供
+#（validate_province / validate_subject_type / validate_level / validate_type）
 
 
 class UniversityCreate(BaseModel):
@@ -107,9 +80,9 @@ class UniversityCreate(BaseModel):
     doctor_points: int = Field(default=0, ge=0)
     key_disciplines: str = Field(default="")
 
-    validate_province = field_validator("province")(_validate_province)
-    validate_level = field_validator("level")(_validate_level)
-    validate_type = field_validator("type")(_validate_type)
+    validate_province = field_validator("province")(validate_province)
+    validate_level = field_validator("level")(validate_level)
+    validate_type = field_validator("type")(validate_type)
 
 
 class UniversityUpdate(UniversityCreate):
@@ -149,8 +122,8 @@ class ScoreCreate(BaseModel):
     min_rank: int = Field(default=0, ge=0)
     plan_count: int = Field(default=0, ge=0)
 
-    validate_province = field_validator("province")(_validate_province)
-    validate_subject_type = field_validator("subject_type")(_validate_subject_type)
+    validate_province = field_validator("province")(validate_province)
+    validate_subject_type = field_validator("subject_type")(validate_subject_type)
 
 
 class ScoreUpdate(ScoreCreate):
@@ -169,8 +142,8 @@ class PlanCreate(BaseModel):
     tuition: str = Field(default="")
     remark: str = Field(default="")
 
-    validate_province = field_validator("province")(_validate_province)
-    validate_subject_type = field_validator("subject_type")(_validate_subject_type)
+    validate_province = field_validator("province")(validate_province)
+    validate_subject_type = field_validator("subject_type")(validate_subject_type)
 
 
 class PlanUpdate(PlanCreate):
@@ -187,7 +160,7 @@ class RuleUpsert(BaseModel):
     description: str = Field(default="")
     tips: str = Field(default="")
 
-    validate_province = field_validator("province")(_validate_province)
+    validate_province = field_validator("province")(validate_province)
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +252,7 @@ async def admin_create_university(
     session.add(uni)
     await session.commit()
     await session.refresh(uni)
+    zhiyuan_repository.invalidate_cache_after_write()
     return {"id": uni.id, **uni.to_dict()}
 
 
@@ -299,6 +273,7 @@ async def admin_update_university(
         setattr(uni, k, v)
     await session.commit()
     await session.refresh(uni)
+    zhiyuan_repository.invalidate_cache_after_write()
     return {"ok": True, **uni.to_dict()}
 
 
@@ -312,13 +287,15 @@ async def admin_delete_university(
     if uni is None:
         raise HTTPException(status_code=404, detail=f"院校不存在: {university_id}")
 
-    # 级联清理：删除关联专业、录取分数、招生计划
+    # 级联清理：删除关联学院、专业、录取分数、招生计划
+    await session.execute(delete(College).where(College.university_id == university_id))
     await session.execute(delete(Major).where(Major.university_id == university_id))
     await session.execute(delete(AdmissionScore).where(AdmissionScore.university_id == university_id))
     await session.execute(delete(EnrollmentPlan).where(EnrollmentPlan.university_id == university_id))
 
     await session.delete(uni)
     await session.commit()
+    zhiyuan_repository.invalidate_cache_after_write()
     return {"ok": True}
 
 
@@ -370,6 +347,7 @@ async def admin_create_major(
     session.add(major)
     await session.commit()
     await session.refresh(major)
+    zhiyuan_repository.invalidate_cache_after_write()
     return {"id": major.id, **major.to_dict()}
 
 
@@ -390,6 +368,7 @@ async def admin_update_major(
         setattr(major, k, v)
     await session.commit()
     await session.refresh(major)
+    zhiyuan_repository.invalidate_cache_after_write()
     return {"ok": True, **major.to_dict()}
 
 
@@ -402,8 +381,14 @@ async def admin_delete_major(
     major = await session.get(Major, major_id)
     if major is None:
         raise HTTPException(status_code=404, detail=f"专业不存在: {major_id}")
+
+    # 级联清理：删除关联录取分数和招生计划
+    await session.execute(delete(AdmissionScore).where(AdmissionScore.major_id == major_id))
+    await session.execute(delete(EnrollmentPlan).where(EnrollmentPlan.major_id == major_id))
+
     await session.delete(major)
     await session.commit()
+    zhiyuan_repository.invalidate_cache_after_write()
     return {"ok": True}
 
 
@@ -439,6 +424,7 @@ async def admin_batch_create_majors(
     for item in items:
         session.add(Major(**item.model_dump()))
     await session.commit()
+    zhiyuan_repository.invalidate_cache_after_write()
     return {"count": len(items)}
 
 
@@ -494,6 +480,7 @@ async def admin_create_score(
     session.add(score)
     await session.commit()
     await session.refresh(score)
+    zhiyuan_repository.invalidate_cache_after_write()
     return {"id": score.id, **score.to_dict()}
 
 
@@ -514,6 +501,7 @@ async def admin_update_score(
         setattr(score, k, v)
     await session.commit()
     await session.refresh(score)
+    zhiyuan_repository.invalidate_cache_after_write()
     return {"ok": True, **score.to_dict()}
 
 
@@ -528,6 +516,7 @@ async def admin_delete_score(
         raise HTTPException(status_code=404, detail=f"分数记录不存在: {score_id}")
     await session.delete(score)
     await session.commit()
+    zhiyuan_repository.invalidate_cache_after_write()
     return {"ok": True}
 
 
@@ -563,6 +552,7 @@ async def admin_batch_create_scores(
     for item in items:
         session.add(AdmissionScore(**item.model_dump()))
     await session.commit()
+    zhiyuan_repository.invalidate_cache_after_write()
     return {"count": len(items)}
 
 
@@ -618,6 +608,7 @@ async def admin_create_plan(
     session.add(plan)
     await session.commit()
     await session.refresh(plan)
+    zhiyuan_repository.invalidate_cache_after_write()
     return {"id": plan.id, **plan.to_dict()}
 
 
@@ -638,6 +629,7 @@ async def admin_update_plan(
         setattr(plan, k, v)
     await session.commit()
     await session.refresh(plan)
+    zhiyuan_repository.invalidate_cache_after_write()
     return {"ok": True, **plan.to_dict()}
 
 
@@ -652,6 +644,7 @@ async def admin_delete_plan(
         raise HTTPException(status_code=404, detail=f"招生计划不存在: {plan_id}")
     await session.delete(plan)
     await session.commit()
+    zhiyuan_repository.invalidate_cache_after_write()
     return {"ok": True}
 
 
@@ -687,6 +680,7 @@ async def admin_batch_create_plans(
     for item in items:
         session.add(EnrollmentPlan(**item.model_dump()))
     await session.commit()
+    zhiyuan_repository.invalidate_cache_after_write()
     return {"count": len(items)}
 
 
@@ -713,7 +707,10 @@ async def admin_upsert_rule(
 ) -> dict[str, Any]:
     """按 province 做 upsert：存在则更新，不存在则新增。"""
     result = await session.execute(
-        select(ProvinceRule).where(ProvinceRule.province == req.province)
+        select(ProvinceRule).where(
+            ProvinceRule.province == req.province,
+            ProvinceRule.year == req.year,
+        )
     )
     rule = result.scalar_one_or_none()
 
@@ -726,6 +723,7 @@ async def admin_upsert_rule(
 
     await session.commit()
     await session.refresh(rule)
+    zhiyuan_repository.invalidate_cache_after_write()
     return rule.to_dict()
 
 
@@ -742,6 +740,7 @@ async def admin_delete_rule(
 
     result = await session.execute(stmt)
     await session.commit()
+    zhiyuan_repository.invalidate_cache_after_write()
 
     if result.rowcount == 0:
         raise HTTPException(status_code=404, detail=f"未找到省份规则: {province}")

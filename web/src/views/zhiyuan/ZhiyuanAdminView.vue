@@ -732,7 +732,7 @@
           </a-col>
           <a-col :span="6">
             <a-form-item label="学费">
-              <a-input-number v-model:value="planState.form.tuition" :min="0" style="width: 100%" />
+              <a-input v-model:value="planState.form.tuition" placeholder="如 5000元/年" />
             </a-form-item>
           </a-col>
           <a-col :span="24">

@@ -147,6 +147,47 @@ _VALID_TYPES: frozenset[str] = frozenset({
     "体育", "艺术", "民族", "军事",
 })
 
+
+# ---------------------------------------------------------------------------
+# 共享参数校验函数（路由层与工具层统一引用，避免重复定义）
+# ---------------------------------------------------------------------------
+
+
+def validate_province(v: str) -> str:
+    """省份白名单校验（空串放行，配合可选字段）。"""
+    if not v:
+        return v
+    if v not in _VALID_PROVINCES:
+        raise ValueError(f"非法省份: {v}")
+    return v
+
+
+def validate_subject_type(v: str) -> str:
+    """科类白名单校验（空串放行，配合可选字段）。"""
+    if not v:
+        return v
+    if v not in _VALID_SUBJECT_TYPES:
+        raise ValueError(f"非法科类: {v}")
+    return v
+
+
+def validate_level(v: str) -> str:
+    """层次白名单校验（空串放行）。"""
+    if not v:
+        return v
+    if v not in _VALID_LEVELS:
+        raise ValueError(f"非法层次: {v}")
+    return v
+
+
+def validate_type(v: str) -> str:
+    """院校类型白名单校验（空串放行）。"""
+    if not v:
+        return v
+    if v not in _VALID_TYPES:
+        raise ValueError(f"非法类型: {v}")
+    return v
+
 # 图查询结果上限
 _GRAPH_MAX_RESULTS: int = 100
 
@@ -376,7 +417,7 @@ class ZhiyuanRepository:
                     "avg_score": r.avg_score,
                     "max_score": r.max_score,
                     "min_rank": r.min_rank,
-                    "avg_rank": r.min_rank,
+                    "avg_rank": r.min_rank,  # 兼容字段：模型无 avg_rank 列，复用 min_rank
                     "batch": r.batch,
                     "province": r.province,
                     "subject_type": r.subject_type,
@@ -1208,7 +1249,7 @@ class ZhiyuanRepository:
                         "avg_score": r.avg_score,
                         "max_score": r.max_score,
                         "min_rank": r.min_rank,
-                        "avg_rank": r.min_rank,
+                        "avg_rank": r.min_rank,  # 兼容字段：模型无 avg_rank 列，复用 min_rank
                         "batch": r.batch,
                         "province": r.province,
                         "subject_type": r.subject_type,
@@ -1229,6 +1270,7 @@ class ZhiyuanRepository:
                     .where(
                         EnrollmentPlan.university_id == uni_row.id,
                         EnrollmentPlan.province == province,
+                        EnrollmentPlan.subject_type == subj_filter,
                         EnrollmentPlan.major_id > 0,
                     )
                     .limit(50)
