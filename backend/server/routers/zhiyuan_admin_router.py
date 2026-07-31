@@ -264,7 +264,7 @@ async def admin_create_university(
     await session.commit()
     await session.refresh(uni)
     zhiyuan_repository.invalidate_cache_after_write()
-    return {"id": uni.id, **uni.to_dict()}
+    return uni.to_dict()
 
 
 @router.put("/universities/{university_id}", summary="更新院校")
@@ -324,7 +324,9 @@ async def admin_list_majors(
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     """分页查询专业列表，支持按院校ID/关键词筛选。"""
-    stmt = select(Major)
+    stmt = select(Major, University.name.label("university_name")).outerjoin(
+        University, Major.university_id == University.id
+    )
     count_stmt = select(func.count()).select_from(Major)
 
     if university_id:
@@ -336,10 +338,10 @@ async def admin_list_majors(
 
     total = (await session.execute(count_stmt)).scalar() or 0
     offset, limit = _paginate(page, size)
-    rows = (await session.execute(stmt.offset(offset).limit(limit))).scalars().all()
+    rows = (await session.execute(stmt.offset(offset).limit(limit))).all()
 
     return {
-        "items": [r.to_dict() for r in rows],
+        "items": [{**m.to_dict(), "university_name": uni_name} for m, uni_name in rows],
         "total": total,
         "page": page,
         "size": size,
@@ -359,7 +361,7 @@ async def admin_create_major(
     await session.commit()
     await session.refresh(major)
     zhiyuan_repository.invalidate_cache_after_write()
-    return {"id": major.id, **major.to_dict()}
+    return major.to_dict()
 
 
 @router.put("/majors/{major_id}", summary="更新专业")
@@ -454,7 +456,9 @@ async def admin_list_scores(
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     """分页查询录取分数列表。"""
-    stmt = select(AdmissionScore)
+    stmt = select(AdmissionScore, University.name.label("university_name")).outerjoin(
+        University, AdmissionScore.university_id == University.id
+    )
     count_stmt = select(func.count()).select_from(AdmissionScore)
 
     if university_id:
@@ -469,10 +473,10 @@ async def admin_list_scores(
 
     total = (await session.execute(count_stmt)).scalar() or 0
     offset, limit = _paginate(page, size)
-    rows = (await session.execute(stmt.offset(offset).limit(limit))).scalars().all()
+    rows = (await session.execute(stmt.offset(offset).limit(limit))).all()
 
     return {
-        "items": [r.to_dict() for r in rows],
+        "items": [{**r.to_dict(), "university_name": uni_name} for r, uni_name in rows],
         "total": total,
         "page": page,
         "size": size,
@@ -492,7 +496,7 @@ async def admin_create_score(
     await session.commit()
     await session.refresh(score)
     zhiyuan_repository.invalidate_cache_after_write()
-    return {"id": score.id, **score.to_dict()}
+    return score.to_dict()
 
 
 @router.put("/scores/{score_id}", summary="更新录取分数")
@@ -582,7 +586,9 @@ async def admin_list_plans(
     session: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     """分页查询招生计划列表。"""
-    stmt = select(EnrollmentPlan)
+    stmt = select(EnrollmentPlan, University.name.label("university_name")).outerjoin(
+        University, EnrollmentPlan.university_id == University.id
+    )
     count_stmt = select(func.count()).select_from(EnrollmentPlan)
 
     if university_id:
@@ -597,10 +603,10 @@ async def admin_list_plans(
 
     total = (await session.execute(count_stmt)).scalar() or 0
     offset, limit = _paginate(page, size)
-    rows = (await session.execute(stmt.offset(offset).limit(limit))).scalars().all()
+    rows = (await session.execute(stmt.offset(offset).limit(limit))).all()
 
     return {
-        "items": [r.to_dict() for r in rows],
+        "items": [{**r.to_dict(), "university_name": uni_name} for r, uni_name in rows],
         "total": total,
         "page": page,
         "size": size,
@@ -620,7 +626,7 @@ async def admin_create_plan(
     await session.commit()
     await session.refresh(plan)
     zhiyuan_repository.invalidate_cache_after_write()
-    return {"id": plan.id, **plan.to_dict()}
+    return plan.to_dict()
 
 
 @router.put("/plans/{plan_id}", summary="更新招生计划")

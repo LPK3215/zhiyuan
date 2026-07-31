@@ -35,9 +35,9 @@ function buildQueryString(params = {}) {
 export { GRAPH_RELATION_OPTIONS } from '@/constants/graphRelations'
 
 export const zhiyuanApi = {
-  /** 公开统计（首页展示用，无需认证） */
+  /** 公开统计（首页展示用，需登录认证） */
   getPublicStats: async () => {
-    const res = await apiGet('/api/zhiyuan/statistics', {}, false)
+    const res = await apiGet('/api/zhiyuan/statistics')
     const data = res?.data || res || {}
     return {
       universities: data.university_count || 0,
@@ -50,9 +50,9 @@ export const zhiyuanApi = {
     }
   },
 
-  /** 数据完整度健康检查（无需认证） */
+  /** 数据完整度健康检查（需登录认证） */
   getDataHealth: () =>
-    apiGet('/api/zhiyuan/health', {}, false),
+    apiGet('/api/zhiyuan/health'),
 
   /** 招生政策文档检索（需登录） */
   searchPolicy: (data) =>

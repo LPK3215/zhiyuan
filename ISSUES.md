@@ -2,7 +2,7 @@
 
 > **维护规则**：本文件是唯一的问题追踪源。每次发现新问题追加到对应分类；每次修复后立即更新状态（`未修复` → `已修复`）。禁止在其他地方维护重复清单。
 
-> **最后更新**：2026-07-31（第六轮全量扫描完成 — 发现 5 个新问题，全部修复）
+> **最后更新**：2026-07-31（第七轮全量扫描完成 — 发现 5 个新问题，全部修复）
 
 ---
 
@@ -11,10 +11,10 @@
 | 分类 | 未修复 | 已修复 | 合计 |
 |------|--------|--------|------|
 | P0 致命（阻断功能） | 0 | 6 | 6 |
-| P1 严重（功能错误） | 0 | 14 | 14 |
+| P1 严重（功能错误） | 0 | 16 | 16 |
 | P2 中等（数据不一致） | 0 | 14 | 14 |
-| P3 低（代码清理/优化） | 0 | 21 | 21 |
-| **合计** | **0** | **55** | **55** |
+| P3 低（代码清理/优化） | 0 | 24 | 24 |
+| **合计** | **0** | **60** | **60** |
 
 > 🎉 全部问题已修复。后续发现的新问题将追加到对应分类。
 
@@ -340,6 +340,36 @@
 - **描述**：`_majorOptionsCache` 按院校 ID 缓存专业列表。当删除院校时，`universityOptions.value = []` 清除了院校下拉缓存，但 `_majorOptionsCache` 中被删除院校的条目未被清除。虽然由于院校已从下拉中移除，用户不会再选择该院校，但残留的缓存条目属于内存泄漏。
 - **修复内容**：在 `deleteUniversity` 成功后添加 `delete _majorOptionsCache[record.id]`。
 
+### R7-P1-1 Admin 列表端点（专业/分数/计划）不包含 `university_name`，前端表格"院校"列为空
+- **状态**：✅ 已修复
+- **文件**：`backend/server/routers/zhiyuan_admin_router.py`
+- **描述**：`admin_list_majors`、`admin_list_scores`、`admin_list_plans` 三个列表端点均直接 `select(Major)` / `select(AdmissionScore)` / `select(EnrollmentPlan)`，不 JOIN University 表。响应项使用 `r.to_dict()`，而 `Major.to_dict()` / `AdmissionScore.to_dict()` / `EnrollmentPlan.to_dict()` 均不包含 `university_name` 字段（仅有 `university_id`）。但前端表格列定义（`majorColumns`、`scoreColumns`、`planColumns`）均包含 `{ title: '院校', dataIndex: 'university_name' }`。导致 Admin 面板的专业/分数/计划三个表格中"院校"列始终为空白，管理员无法直观看到记录属于哪所院校。
+- **修复内容**：三个列表查询均改为 `select(Model, University.name.label("university_name")).outerjoin(University, ...)`，响应项改为 `[{**r.to_dict(), "university_name": uni_name} for r, uni_name in rows]`。
+
+### R7-P1-2 `getPublicStats` 和 `getDataHealth` 不发送认证头，导致 401 错误和用户被踢出登录
+- **状态**：✅ 已修复
+- **文件**：`web/src/apis/zhiyuan_api.js`
+- **描述**：`getPublicStats` 调用 `apiGet('/api/zhiyuan/statistics', {}, false)`，`getDataHealth` 调用 `apiGet('/api/zhiyuan/health', {}, false)`。第三个参数 `false` 表示 `requiresAuth=false`，即不附加 Authorization 请求头。但后端 `zhiyuan_router` 在 P0-6 修复中已为所有路由添加了 `dependencies=[Depends(get_required_user)]`，要求所有 `/api/zhiyuan/*` 端点必须认证。因此这两个调用必然收到 401 响应。更严重的是，`apiRequest` 的 401 错误处理会执行 `userStore.logout()` + `window.location.href = '/login'`，导致管理员页面加载时即被踢出登录，首页（`HomeView.vue`）中未登录用户也会被强制跳转到登录页。
+- **修复内容**：将两个 API 调用的 `requiresAuth` 改为默认值 `true`（移除第三个参数 `false`），确保已登录用户发送认证头。未登录用户调用时在 `apiRequest` 内抛出 `"用户未登录"` 错误（不发 HTTP 请求），被调用方的 `.catch()` 静默处理，不会触发 401 踢出逻辑。
+
+### R7-P3-1 Makefile `lint` target 未检查 `server` 目录
+- **状态**：✅ 已修复
+- **文件**：`Makefile`
+- **描述**：`lint` target 执行 `ruff check package`，仅检查 `backend/package` 目录，不检查 `backend/server` 目录（路由、中间件等代码）。`server/` 中的 lint 错误无法被发现。
+- **修复内容**：改为 `ruff check package server`。
+
+### R7-P3-2 `seed-zhiyuan` Makefile target 硬编码单一 SQL 文件名
+- **状态**：✅ 已修复
+- **文件**：`Makefile`
+- **描述**：`seed-zhiyuan` target 使用 `for f in data/seed_henan_universities.sql` 硬编码单一文件名。新增种子数据文件（如 `data/seed_beijing_scores.sql`）不会被自动导入。
+- **修复内容**：改为 `for f in data/seed_*.sql` 通配符模式，自动导入所有匹配的 SQL 文件。
+
+### R7-P3-3 Admin 创建端点响应中 `id` 字段冗余
+- **状态**：✅ 已修复
+- **文件**：`backend/server/routers/zhiyuan_admin_router.py`
+- **描述**：`admin_create_university`、`admin_create_major`、`admin_create_score`、`admin_create_plan` 四个创建端点的返回值为 `{"id": obj.id, **obj.to_dict()}`，但 `to_dict()` 已包含 `id` 字段。Python 字典展开时 `to_dict()` 的 `id` 会覆盖显式设置的 `id`，显式设置完全无效且冗余。
+- **修复内容**：四个端点均简化为 `return obj.to_dict()`。
+
 ---
 
 ## 六、已修复问题归档（Issue 1-24）
@@ -454,3 +484,12 @@
 |------|----------|
 | `web/src/views/zhiyuan/ZhiyuanAdminView.vue` | 移除文件选择器死代码；新增 JSON 批量导入 Modal（支持专业/分数/计划三种类型）；计划 Tab 添加批量导入按钮；删除院校时清除 _majorOptionsCache |
 | `web/src/views/zhiyuan/UniversityBrowse.vue` | 分数趋势图 minScore/maxScore 不再硬编码包含 0/750，改用实际数据范围 |
+
+### 第七批修复（R7 全量扫描 — 5 个问题）
+
+#### 修改文件
+| 文件 | 修改内容 |
+|------|----------|
+| `backend/server/routers/zhiyuan_admin_router.py` | 专业/分数/计划列表端点 JOIN University 表并返回 `university_name`；创建端点移除冗余 `id` 字段 |
+| `web/src/apis/zhiyuan_api.js` | `getPublicStats`/`getDataHealth` 移除 `requiresAuth=false`，确保发送认证头 |
+| `Makefile` | `lint` target 增加 `server` 目录检查；`seed-zhiyuan` 改用通配符 `seed_*.sql` |

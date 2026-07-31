@@ -46,7 +46,7 @@ seed-users:
 
 seed-zhiyuan:
 	@echo "Importing zhiyuan seed data..."
-	@for f in data/seed_henan_universities.sql; do \
+	@for f in data/seed_*.sql; do \
 		if [ -f "$$f" ]; then \
 		docker compose exec -T postgres psql -U $$(grep POSTGRES_USER .env | cut -d= -f2) -d $$(grep POSTGRES_DB .env | cut -d= -f2 || echo yuxi) < "$$f"; \
 		fi \
@@ -58,7 +58,7 @@ seed-zhiyuan:
 ######################
 
 lint:
-	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv run ruff check package
+	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv run ruff check package server
 	cd web && pnpm run lint
 
 format:
