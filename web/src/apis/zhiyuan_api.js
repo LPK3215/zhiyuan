@@ -37,8 +37,19 @@ export { GRAPH_RELATION_OPTIONS } from '@/constants/graphRelations'
 
 export const zhiyuanApi = {
   /** 公开统计（首页展示用，无需认证） */
-  getPublicStats: () =>
-    apiGet('/api/zhiyuan/stats', {}, false),
+  getPublicStats: async () => {
+    const res = await apiGet('/api/zhiyuan/statistics', {}, false)
+    const data = res?.data || res || {}
+    return {
+      universities: data.university_count || 0,
+      majors: data.major_count || 0,
+      admission_scores: data.admission_score_count || 0,
+      score_ranks: data.score_rank_count || 0,
+      enrollment_plans: data.enrollment_plan_count || 0,
+      provinces_covered: data.province_count || 0,
+      year_range: data.year_range || null,
+    }
+  },
 
   /** 数据完整度健康检查（无需认证） */
   getDataHealth: () =>

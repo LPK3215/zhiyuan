@@ -21,8 +21,8 @@ import logging
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-from ... import get_session  # Agent 框架提供的会话获取函数
-from ....repositories.zhiyuan_repository import (
+from yuxi.storage.postgres.manager import pg_manager  # 数据库会话管理器
+from yuxi.repositories.zhiyuan_repository import (
     DatabaseError,
     DataNotFoundError,
     InvalidParameterError,
@@ -175,7 +175,7 @@ async def search_universities(
         # 参数校验
         limit = min(max(1, limit), 50)
 
-        async with get_session() as session:
+        async with pg_manager.get_async_session_context() as session:
             result = await zhiyuan_repository.list_universities(
                 session,
                 keyword=keyword or None,
@@ -214,7 +214,7 @@ async def get_university_detail(
         return _error("院校名称不能为空")
 
     try:
-        async with get_session() as session:
+        async with pg_manager.get_async_session_context() as session:
             detail = await zhiyuan_repository.get_university_detail(
                 session, university_name.strip()
             )
@@ -259,7 +259,7 @@ async def query_admission_scores(
         return _error("科类不能为空")
 
     try:
-        async with get_session() as session:
+        async with pg_manager.get_async_session_context() as session:
             scores = await zhiyuan_repository.query_admission_scores(
                 session,
                 university_name=university_name.strip(),
@@ -299,7 +299,7 @@ async def estimate_rank(
         估算的省位次
     """
     try:
-        async with get_session() as session:
+        async with pg_manager.get_async_session_context() as session:
             rank = await zhiyuan_repository.get_score_rank(
                 session,
                 score=score,
@@ -310,7 +310,7 @@ async def estimate_rank(
             return _error(
                 f"未能根据 {province} {subject_type} {score}分 估算位次，请手动提供位次"
             )
-        return _success({"rank": rank, "score": score})
+        return _success({"rank": rank["rank"], "same_score_count": rank["same_score_count"], "score": score})
     except InvalidParameterError as e:
         return _error(str(e))
     except DatabaseError as e:
@@ -346,7 +346,7 @@ async def generate_plan(
         冲稳保三档院校方案及概率分析
     """
     try:
-        async with get_session() as session:
+        async with pg_manager.get_async_session_context() as session:
             plan = await zhiyuan_repository.generate_plan(
                 session,
                 score=score,
@@ -427,7 +427,7 @@ async def compare_universities(
         return _error("最多同时对比 5 所院校")
 
     try:
-        async with get_session() as session:
+        async with pg_manager.get_async_session_context() as session:
             # 并行查询所有院校（asyncio.gather 消除串行 N+1）
             async def _fetch_one(name: str) -> Optional[Dict[str, Any]]:
                 n = name.strip()
@@ -492,7 +492,7 @@ async def query_knowledge_graph(
         return _error("实体名称不能为空")
 
     try:
-        async with get_session() as session:
+        async with pg_manager.get_async_session_context() as session:
             relations = await zhiyuan_repository.query_graph(
                 session,
                 start_entity=entity.strip(),
@@ -532,7 +532,7 @@ async def search_policy(
         return _error("问题至少需要 2 个字符")
 
     try:
-        async with get_session() as session:
+        async with pg_manager.get_async_session_context() as session:
             result = await zhiyuan_repository.search_policy(
                 session,
                 question=question.strip(),
@@ -580,7 +580,7 @@ async def analyze_admission_probability(
         return _error("院校名称不能为空")
 
     try:
-        async with get_session() as session:
+        async with pg_manager.get_async_session_context() as session:
             scores = await zhiyuan_repository.query_admission_scores(
                 session,
                 university_name=university_name.strip(),
@@ -686,7 +686,7 @@ async def get_system_status() -> Dict[str, Any]:
         系统健康状态、数据统计
     """
     try:
-        async with get_session() as session:
+        async with pg_manager.get_async_session_context() as session:
             # 并行获取健康检查与统计数据
             health, stats = await asyncio.gather(
                 zhiyuan_repository.get_health(session),
@@ -726,7 +726,7 @@ async def recommend_majors(
         推荐专业列表
     """
     try:
-        async with get_session() as session:
+        async with pg_manager.get_async_session_context() as session:
             # 先估算位次
             rank = await zhiyuan_repository.get_score_rank(
                 session, score=score, province=province, subject_type=subject_type

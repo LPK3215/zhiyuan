@@ -15,11 +15,11 @@ export default defineConfig(({ mode }) => {
     server: {
       proxy: {
         '^/api': {
-          target: env.VITE_API_URL || 'http://api:5050',
+          target: env.VITE_API_URL || 'http://host.docker.internal:5050',
           changeOrigin: true
         },
         '^/minio/public/': {
-          target: env.VITE_MINIO_URL || 'http://minio:9000',
+          target: env.VITE_MINIO_URL || 'http://host.docker.internal:9000',
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/minio/, '')
         }

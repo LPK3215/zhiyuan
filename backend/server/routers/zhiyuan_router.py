@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -23,7 +24,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_db as get_db_session
-from ...package.yuxi.repositories.zhiyuan_repository import (
+from yuxi.repositories.zhiyuan_repository import (
     DatabaseError,
     DataNotFoundError,
     InvalidParameterError,
@@ -33,7 +34,7 @@ from ...package.yuxi.repositories.zhiyuan_repository import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/zhiyuan", tags=["智愿"])
+router = APIRouter(prefix="/zhiyuan", tags=["智愿"])
 zhiyuan = router  # 对外导出别名，保持 server.routers.__init__ 的 `from ... import zhiyuan` 兼容
 
 # ---------------------------------------------------------------------------
@@ -58,7 +59,7 @@ PLAN_CATEGORIES: Dict[str, str] = {"rush": "冲", "stable": "稳", "safe": "保"
 
 def _validate_province(v: str) -> str:
     """省份白名单校验（空串放行，配合可选字段）。"""
-    from ...package.yuxi.repositories.zhiyuan_repository import _VALID_PROVINCES
+    from yuxi.repositories.zhiyuan_repository import _VALID_PROVINCES
     if not v:
         return v
     if v not in _VALID_PROVINCES:
@@ -68,7 +69,7 @@ def _validate_province(v: str) -> str:
 
 def _validate_subject_type(v: str) -> str:
     """科类白名单校验（空串放行，配合可选字段）。"""
-    from ...package.yuxi.repositories.zhiyuan_repository import _VALID_SUBJECT_TYPES
+    from yuxi.repositories.zhiyuan_repository import _VALID_SUBJECT_TYPES
     if not v:
         return v
     if v not in _VALID_SUBJECT_TYPES:
@@ -180,6 +181,7 @@ def _handle_repo_error(e: Exception) -> HTTPException:
 def _route_handler(endpoint_name: str):
     """路由层统一异常处理装饰器，消除 10+ 个端点中的重复 try/except 模式。"""
     def decorator(func):
+        @functools.wraps(func)
         async def wrapper(*args, **kwargs):
             try:
                 return await func(*args, **kwargs)
@@ -190,9 +192,6 @@ def _route_handler(endpoint_name: str):
             except Exception as e:
                 logger.exception(f"{endpoint_name} 未预期错误")
                 raise HTTPException(status_code=500, detail=f"{endpoint_name}失败: {e}")
-        # 保留原函数元信息（FastAPI 依赖装饰器链）
-        wrapper.__name__ = func.__name__
-        wrapper.__qualname__ = func.__qualname__
         return wrapper
     return decorator
 
@@ -226,15 +225,22 @@ async def list_universities(
 
 
 @router.get("/universities/{university_name}", summary="院校详情")
+@_route_handler("get_university_detail")
 async def get_university_detail(
     university_name: str,
     session: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
-    """获取指定院校的详细信息。"""
-    detail = await zhiyuan_repository.get_university_detail(session, university_name)
-    if detail is None:
-        raise HTTPException(status_code=404, detail=f"院校不存在: {university_name}")
-    return detail
+    """获取指定院校的详细信息（含录取分数和招生计划）。"""
+    try:
+        return await zhiyuan_repository.query_university_admission(
+            session,
+            university_name=university_name,
+        )
+    except DataNotFoundError:
+        detail = await zhiyuan_repository.get_university_detail(session, university_name)
+        if detail is None:
+            raise
+        return {"university": detail, "scores": [], "plans": []}
 
 
 @router.post("/universities/compare", summary="院校对比")
@@ -295,18 +301,30 @@ async def get_score_rank(
     session: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
     """根据分数估算省位次。"""
-    rank = await zhiyuan_repository.get_score_rank(
+    result = await zhiyuan_repository.get_score_rank(
         session,
         score=req.score,
         province=req.province,
         subject_type=req.subject_type,
     )
-    if rank is None:
+    if result is None:
         raise HTTPException(
             status_code=404,
             detail=f"未找到 {req.province} {req.subject_type} {req.score}分 的位次数据",
         )
-    return {"rank": rank, "score": req.score}
+    return {
+        "rank": result["rank"],
+        "score": req.score,
+        "same_score_count": result["same_score_count"],
+    }
+
+
+@router.post("/score-to-rank", summary="分数转位次(别名)")
+async def score_to_rank_alias(
+    req: ScoreRankRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    return await get_score_rank(req, session)
 
 
 @router.post("/admission", summary="院校录取详情")

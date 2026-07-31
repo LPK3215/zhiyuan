@@ -13,6 +13,9 @@ export function sanitizeRedirect(value) {
     value[1] !== '/' &&
     value[1] !== '\\'
   ) {
+    if (value === '/login' || value.startsWith('/login?')) {
+      return '/'
+    }
     return value
   }
   return '/'

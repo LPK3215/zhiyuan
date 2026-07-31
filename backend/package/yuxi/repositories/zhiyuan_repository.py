@@ -26,6 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .zhiyuan_models import (
     AdmissionScore,
     EnrollmentPlan,
+    Major,
+    ScoreRank,
     University,
 )
 
@@ -418,9 +420,9 @@ class ZhiyuanRepository:
         score: int,
         province: str,
         subject_type: str,
-    ) -> Optional[int]:
+    ) -> Optional[Dict[str, int]]:
         """
-        根据分数估算省位次。
+        根据分数估算省位次及同分人数。
 
         使用 ScoreRank 一分一段表查找最接近的位次值。
 
@@ -431,7 +433,7 @@ class ZhiyuanRepository:
             subject_type: 科类
 
         Returns:
-            估算位次，无数据时返回 None
+            {"rank": int, "same_score_count": int}，无数据时返回 None
 
         Raises:
             InvalidParameterError: 参数不合法
@@ -449,7 +451,6 @@ class ZhiyuanRepository:
         try:
             from .zhiyuan_models import ScoreRank
 
-            # 使用一分一段表精确查找
             current_year = datetime.now(timezone.utc).year - 1  # 最近一年
             stmt = (
                 select(ScoreRank)
@@ -464,11 +465,13 @@ class ZhiyuanRepository:
             row = result.scalar_one_or_none()
 
             if row is not None:
-                return row.rank
+                return {
+                    "rank": int(row.rank),
+                    "same_score_count": int(getattr(row, "segment_count", 0) or 0),
+                }
 
-            # 降级：查找附近分数
             stmt2 = (
-                select(ScoreRank.rank)
+                select(ScoreRank.rank, ScoreRank.segment_count)
                 .where(
                     ScoreRank.province == province,
                     ScoreRank.subject_type == subj_filter,
@@ -484,10 +487,14 @@ class ZhiyuanRepository:
                 return None
 
             ranks = [r[0] for r in rows if r[0] is not None]
+            segments = [r[1] for r in rows if r[1] is not None]
             if not ranks:
                 return None
 
-            return int(sum(ranks) / len(ranks))
+            return {
+                "rank": int(sum(ranks) / len(ranks)),
+                "same_score_count": int(sum(segments) / len(segments)) if segments else 0,
+            }
         except RepositoryError:
             raise
         except Exception as e:
@@ -1019,10 +1026,22 @@ class ZhiyuanRepository:
             uni_count_stmt = select(func.count()).select_from(University)
             uni_count = (await session.execute(uni_count_stmt)).scalar() or 0
 
+            major_count_stmt = select(func.count()).select_from(Major)
+            major_count = (await session.execute(major_count_stmt)).scalar() or 0
+
             provinces_stmt = select(
                 func.count(func.distinct(AdmissionScore.province))
             )
             province_count = (await session.execute(provinces_stmt)).scalar() or 0
+
+            admission_score_count_stmt = select(func.count()).select_from(AdmissionScore)
+            admission_score_count = (await session.execute(admission_score_count_stmt)).scalar() or 0
+
+            score_rank_count_stmt = select(func.count()).select_from(ScoreRank)
+            score_rank_count = (await session.execute(score_rank_count_stmt)).scalar() or 0
+
+            enrollment_plan_count_stmt = select(func.count()).select_from(EnrollmentPlan)
+            enrollment_plan_count = (await session.execute(enrollment_plan_count_stmt)).scalar() or 0
 
             year_min_stmt = select(func.min(AdmissionScore.year))
             year_min = (await session.execute(year_min_stmt)).scalar()
@@ -1032,7 +1051,11 @@ class ZhiyuanRepository:
 
             return {
                 "university_count": uni_count,
+                "major_count": major_count,
                 "province_count": province_count,
+                "admission_score_count": admission_score_count,
+                "score_rank_count": score_rank_count,
+                "enrollment_plan_count": enrollment_plan_count,
                 "year_range": {"min": year_min, "max": year_max},
             }
         except Exception as e:
@@ -1044,8 +1067,8 @@ class ZhiyuanRepository:
         session: AsyncSession,
         *,
         university_name: str,
-        province: str,
-        subject_type: str,
+        province: str = "",
+        subject_type: str = "",
     ) -> Dict[str, Any]:
         """
         查询指定院校在指定省份+科类的历年录取详情。
@@ -1062,19 +1085,62 @@ class ZhiyuanRepository:
             if uni_row is None:
                 raise DataNotFoundError(f"院校不存在: {university_name}")
 
-            scores = await self.query_admission_scores(
-                session,
-                university_name=university_name,
-                province=province,
-                subject_type=subject_type,
-            )
+            scores: List[Dict[str, Any]] = []
+            if province and subject_type:
+                scores = await self.query_admission_scores(
+                    session,
+                    university_name=university_name,
+                    province=province,
+                    subject_type=subject_type,
+                )
+            else:
+                scores_stmt = (
+                    select(AdmissionScore)
+                    .join(University, AdmissionScore.university_id == University.id)
+                    .where(University.name == university_name)
+                    .order_by(AdmissionScore.year.desc())
+                    .limit(100)
+                )
+                scores_result = await session.execute(scores_stmt)
+                scores_rows = scores_result.scalars().all()
+                scores = [
+                    {
+                        "year": r.year,
+                        "min_score": r.min_score,
+                        "avg_score": r.avg_score,
+                        "max_score": r.max_score,
+                        "min_rank": r.min_rank,
+                        "avg_rank": getattr(r, "avg_rank", 0),
+                        "batch": r.batch,
+                        "province": r.province,
+                        "subject_type": r.subject_type,
+                    }
+                    for r in scores_rows
+                ]
 
-            # 招生计划
-            subj_filter = self._subject_type_filter(subject_type)
+            subj_filter = self._subject_type_filter(subject_type) if subject_type else None
             plans: List[Dict[str, Any]] = []
-            if subj_filter:
-                from .zhiyuan_models import Major
-
+            if subj_filter and province:
+                plan_stmt = (
+                    select(
+                        Major.name.label("major_name"),
+                        EnrollmentPlan.plan_count,
+                        EnrollmentPlan.year,
+                    )
+                    .join(Major, EnrollmentPlan.major_id == Major.id)
+                    .where(
+                        EnrollmentPlan.university_id == uni_row.id,
+                        EnrollmentPlan.province == province,
+                        EnrollmentPlan.major_id > 0,
+                    )
+                    .limit(50)
+                )
+                plan_result = await session.execute(plan_stmt)
+                plans = [
+                    {"major_name": mn, "plan_count": pc, "year": yr}
+                    for mn, pc, yr in plan_result.all()
+                ]
+            else:
                 plan_stmt = (
                     select(
                         Major.name.label("major_name"),
@@ -1086,7 +1152,7 @@ class ZhiyuanRepository:
                         EnrollmentPlan.university_id == uni_row.id,
                         EnrollmentPlan.major_id > 0,
                     )
-                    .limit(50)
+                    .limit(100)
                 )
                 plan_result = await session.execute(plan_stmt)
                 plans = [

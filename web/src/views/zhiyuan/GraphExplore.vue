@@ -135,7 +135,7 @@ function buildGraphData(relationsList) {
 
   for (const rel of relationsList) {
     const startName = rel.start || rel.start_name
-    const targetName = rel.target || rel.target_name
+    const targetName = rel.end || rel.target || rel.target_name
     const relationType = rel.relation || rel.type || '关联'
 
     if (!startName || !targetName) continue

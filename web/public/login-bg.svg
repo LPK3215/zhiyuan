@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 900" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a6e8c;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#0d4f6b;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#073448;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2ec4b6;stop-opacity:0.3" />
+      <stop offset="100%" style="stop-color:#2ec4b6;stop-opacity:0" />
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="30%" r="50%">
+      <stop offset="0%" style="stop-color:#2ec4b6;stop-opacity:0.15" />
+      <stop offset="100%" style="stop-color:#2ec4b6;stop-opacity:0" />
+    </radialGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="900" fill="url(#bg)"/>
+  <rect width="800" height="900" fill="url(#grid)"/>
+  <ellipse cx="400" cy="250" rx="400" ry="200" fill="url(#glow)"/>
+
+  <!-- Decorative floating circles -->
+  <circle cx="120" cy="180" r="60" fill="rgba(46,196,182,0.08)"/>
+  <circle cx="680" cy="720" r="100" fill="rgba(46,196,182,0.06)"/>
+  <circle cx="700" cy="150" r="40" fill="rgba(255,255,255,0.05)"/>
+  <circle cx="80" cy="750" r="80" fill="rgba(255,255,255,0.04)"/>
+
+  <!-- Bottom accent bar -->
+  <rect x="0" y="700" width="800" height="200" fill="url(#accent)"/>
+
+  <!-- University silhouette shapes -->
+  <g opacity="0.12" fill="white">
+    <rect x="100" y="600" width="80" height="120" rx="4"/>
+    <rect x="200" y="560" width="60" height="160" rx="4"/>
+    <rect x="280" y="620" width="100" height="100" rx="4"/>
+    <rect x="400" y="580" width="70" height="140" rx="4"/>
+    <rect x="490" y="640" width="90" height="80" rx="4"/>
+    <rect x="600" y="570" width="50" height="150" rx="4"/>
+    <rect x="670" y="610" width="70" height="110" rx="4"/>
+  </g>
+
+  <!-- Top decorative elements -->
+  <g stroke="rgba(46,196,182,0.4)" stroke-width="1" fill="none">
+    <circle cx="680" cy="120" r="30"/>
+    <circle cx="680" cy="120" r="50"/>
+    <circle cx="680" cy="120" r="70"/>
+  </g>
+
+  <!-- Logo / Brand area at bottom -->
+  <g transform="translate(400, 420)">
+    <circle cx="0" cy="0" r="45" fill="rgba(46,196,182,0.15)" stroke="rgba(46,196,182,0.5)" stroke-width="2"/>
+    <!-- Graduation cap icon -->
+    <g transform="translate(-22, -22)" fill="rgba(255,255,255,0.9)">
+      <path d="M22 8L2 18l20 10 20-10L22 8z" fill="rgba(255,255,255,0.9)"/>
+      <path d="M6 22v8c0 4.4 7.2 8 16 8s16-3.6 16-8v-8" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="2" stroke-linecap="round"/>
+      <line x1="42" y1="14" x2="42" y2="28" stroke="rgba(255,255,255,0.9)" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="42" cy="30" r="2" fill="rgba(255,255,255,0.9)"/>
+    </g>
+  </g>
+
+  <!-- Brand text -->
+  <text x="400" y="530" text-anchor="middle" font-family="'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="32" font-weight="700" fill="rgba(255,255,255,0.95)">智愿</text>
+  <text x="400" y="570" text-anchor="middle" font-family="'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="16" fill="rgba(255,255,255,0.55)">高考志愿填报智能顾问</text>
+
+  <!-- Decorative dots pattern -->
+  <g fill="rgba(255,255,255,0.15)">
+    <circle cx="150" cy="400" r="3"/>
+    <circle cx="180" cy="420" r="2"/>
+    <circle cx="160" cy="445" r="2.5"/>
+    <circle cx="650" cy="380" r="3"/>
+    <circle cx="630" cy="410" r="2"/>
+    <circle cx="660" cy="430" r="2.5"/>
+    <circle cx="200" cy="700" r="3"/>
+    <circle cx="600" cy="690" r="2.5"/>
+  </g>
+
+  <!-- Connection lines -->
+  <g stroke="rgba(46,196,182,0.2)" stroke-width="1" fill="none">
+    <path d="M150 200 Q250 300 350 250 T550 280 T700 200"/>
+    <path d="M100 500 Q200 550 350 520 T600 540 T750 500"/>
+  </g>
+</svg>

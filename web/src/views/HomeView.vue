@@ -397,7 +397,7 @@ const loadData = async () => {
     startBadgeTyping()
     // 加载平台统计数据（失败不影响首页展示）
     zhiyuanApi.getPublicStats().then((res) => {
-      stats.value = res?.data || null
+      stats.value = res || null
     }).catch(() => {
       // 统计加载失败时静默处理
     })

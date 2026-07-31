@@ -37,7 +37,17 @@
       <div class="login-card">
         <!-- 左侧图片 -->
         <div class="card-side is-image">
-          <img :src="loginBgImage" alt="登录背景" class="login-bg-image" />
+          <div class="login-bg-fallback"></div>
+          <img
+            :src="loginBgImage"
+            alt="登录背景"
+            class="login-bg-image"
+            @error="onImageError"
+            v-if="!imageLoadError"
+          />
+          <div v-else class="login-bg-svg-fallback">
+            <img src="/login-bg.svg" alt="登录背景" class="login-bg-image" />
+          </div>
         </div>
 
         <!-- 右侧表单 -->
@@ -304,7 +314,7 @@ const agentStore = useAgentStore()
 
 // 品牌展示数据
 const loginBgImage = computed(() => {
-  return infoStore.organization?.login_bg || '/login-bg.jpg'
+  return infoStore.organization?.login_bg || '/login-bg.svg'
 })
 const brandLogo = computed(() => {
   return infoStore.organization?.logo || ''
@@ -340,6 +350,11 @@ const agreementAccepted = ref(false)
 const serverStatus = ref('loading')
 const serverError = ref('')
 const healthChecking = ref(false)
+const imageLoadError = ref(false)
+
+const onImageError = () => {
+  imageLoadError.value = true
+}
 
 // OIDC 相关状态
 const oidcEnabled = ref(false)
@@ -597,7 +612,11 @@ const checkFirstRunStatus = async () => {
   try {
     loading.value = true
     const isFirst = await userStore.checkFirstRun()
-    isFirstRun.value = isFirst
+    if (userStore.token && isFirst) {
+      isFirstRun.value = false
+    } else {
+      isFirstRun.value = isFirst
+    }
   } catch (error) {
     console.error('检查首次运行状态失败:', error)
     errorMessage.value = '系统出错，请稍后重试'
@@ -819,14 +838,33 @@ onUnmounted(() => {
 /* Image Side */
 .card-side.is-image {
   flex: 1.4;
-  background-color: var(--main-10);
+  background: linear-gradient(135deg, #0a6e8c 0%, #0d4f6b 50%, #073448 100%);
   overflow: hidden;
+  position: relative;
+
+  .login-bg-fallback {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse at 50% 30%, rgba(46, 196, 182, 0.15) 0%, transparent 60%),
+      repeating-linear-gradient(0deg, rgba(255,255,255,0.02) 0px, rgba(255,255,255,0.02) 1px, transparent 1px, transparent 40px),
+      repeating-linear-gradient(90deg, rgba(255,255,255,0.02) 0px, rgba(255,255,255,0.02) 1px, transparent 1px, transparent 40px);
+  }
 
   .login-bg-image {
     width: 100%;
     height: 100%;
     object-fit: cover;
     object-position: center;
+    position: relative;
+    z-index: 1;
+  }
+
+  .login-bg-svg-fallback {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    z-index: 1;
   }
 }
 
