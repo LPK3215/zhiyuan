@@ -7,7 +7,6 @@ import {
   apiAdminDelete,
 } from './base'
 import {
-  buildUniversityDetailUrl,
   buildProvinceRuleUrl,
   buildQueryGraphParams,
 } from './zhiyuanUrl'
@@ -53,7 +52,7 @@ export const zhiyuanApi = {
 
   /** 数据完整度健康检查（无需认证） */
   getDataHealth: () =>
-    apiGet('/api/zhiyuan/stats/health', {}, false),
+    apiGet('/api/zhiyuan/health', {}, false),
 
   /** 招生政策文档检索（需登录） */
   searchPolicy: (data) =>
@@ -67,9 +66,9 @@ export const zhiyuanApi = {
   searchUniversities: (params = {}) =>
     apiGet(`/api/zhiyuan/universities${buildQueryString(params)}`),
 
-  /** 获取院校详情 */
-  getUniversityDetail: (id) =>
-    apiGet(buildUniversityDetailUrl(id)),
+  /** 获取院校详情（后端按院校名称查询） */
+  getUniversityDetail: (name) =>
+    apiGet(`/api/zhiyuan/universities/${encodeURIComponent(name)}`),
 
   /** 查询录取分数 */
   queryScores: (params = {}) => apiPost('/api/zhiyuan/scores', params),

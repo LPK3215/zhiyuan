@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import datetime, UTC
+from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +27,7 @@ from .zhiyuan_models import (
     AdmissionScore,
     EnrollmentPlan,
     Major,
+    ProvinceRule,
     ScoreRank,
     University,
 )
@@ -37,7 +38,7 @@ logger = logging.getLogger(__name__)
 # 缓存（单进程简易实现，可替换为 Redis）
 # ---------------------------------------------------------------------------
 
-_cache: Dict[str, tuple[float, Any]] = {}
+_cache: dict[str, tuple[float, Any]] = {}
 
 # 缓存有效期（秒）
 CACHE_TTL: float = 300.0  # 5 分钟
@@ -51,7 +52,7 @@ def _cache_key(*parts: str) -> str:
     return ":".join(p for p in parts if p)
 
 
-def _cache_get(key: str) -> Optional[Any]:
+def _cache_get(key: str) -> Any | None:
     """从缓存读取，过期自动清除。"""
     entry = _cache.get(key)
     if entry is None:
@@ -118,6 +119,10 @@ def estimate_admission_probability(ratio: float) -> float:
 # 查询参数规范化
 # ---------------------------------------------------------------------------
 
+# 高考分数范围
+SCORE_MIN: int = 200
+SCORE_MAX: int = 750
+
 # 合法省份白名单
 _VALID_PROVINCES: frozenset[str] = frozenset({
     "北京", "天津", "河北", "山西", "内蒙古", "辽宁", "吉林", "黑龙江",
@@ -149,12 +154,7 @@ _GRAPH_MAX_RESULTS: int = 100
 _PLAN_CATEGORY_LIMIT: int = 10
 
 # 志愿分档中英文映射
-_PLAN_CATEGORY_LABELS: Dict[str, str] = {"rush": "冲", "stable": "稳", "safe": "保"}
-
-# 健康检查评分权重（每张核心表非空得分）
-_HEALTH_CORE_TABLE_COUNT: int = 3
-_HEALTH_SCORE_PER_TABLE: int = 33  # 99 / 3
-
+_PLAN_CATEGORY_LABELS: dict[str, str] = {"rush": "冲", "stable": "稳", "safe": "保"}
 
 # ---------------------------------------------------------------------------
 # 自定义异常
@@ -196,7 +196,7 @@ class ZhiyuanRepository:
     # ---- 辅助方法 -----------------------------------------------------------
 
     @staticmethod
-    def _subject_type_filter(subject_type: str) -> Optional[str]:
+    def _subject_type_filter(subject_type: str) -> str | None:
         """
         科类过滤转换。
 
@@ -216,13 +216,13 @@ class ZhiyuanRepository:
         self,
         session: AsyncSession,
         *,
-        keyword: Optional[str] = None,
-        province: Optional[str] = None,
-        level: Optional[str] = None,
-        school_type: Optional[str] = None,
+        keyword: str | None = None,
+        province: str | None = None,
+        level: str | None = None,
+        school_type: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         院校列表查询（支持多条件筛选、分页）。
 
@@ -253,7 +253,7 @@ class ZhiyuanRepository:
         limit = min(max(1, limit), 200)
 
         try:
-            conditions: List[Any] = []
+            conditions: list[Any] = []
 
             if keyword:
                 conditions.append(University.name.ilike(f"%{keyword}%"))
@@ -290,7 +290,7 @@ class ZhiyuanRepository:
 
     async def get_university_detail(
         self, session: AsyncSession, university_name: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         获取院校详情（含开设专业列表）。
 
@@ -310,41 +310,15 @@ class ZhiyuanRepository:
 
             uni_dict = uni_row.to_dict()
 
-            # 查询该院校的招生专业（取最新年份数据）
-            plan_stmt = (
-                select(EnrollmentPlan)
-                .where(EnrollmentPlan.university_id == uni_row.id)
-                .order_by(EnrollmentPlan.year.desc())
-                .limit(100)
+            # 查询该院校开设的所有专业（完整记录，含就业率/薪资/选科要求等字段）
+            major_stmt = (
+                select(Major)
+                .where(Major.university_id == uni_row.id)
+                .order_by(Major.name)
             )
-            plan_result = await session.execute(plan_stmt)
-            plan_rows = plan_result.scalars().all()
-
-            # 批量加载专业名称（消除 N+1 查询）
-            major_ids = [p.major_id for p in plan_rows if p.major_id and p.major_id > 0]
-            major_name_map: Dict[int, str] = {}
-            if major_ids:
-                from .zhiyuan_models import Major
-                major_stmt = select(Major.id, Major.name).where(Major.id.in_(major_ids))
-                major_result = await session.execute(major_stmt)
-                for mid, mname in major_result.all():
-                    major_name_map[mid] = mname
-
-            # 去重专业列表（同名专业取最新计划数）
-            major_map: Dict[str, Dict[str, Any]] = {}
-            for p in plan_rows:
-                mname = major_name_map.get(p.major_id, "") if p.major_id else ""
-                plan_count = p.plan_count or 0
-                if not mname:
-                    continue
-                if mname not in major_map:
-                    major_map[mname] = {
-                        "major_name": mname,
-                        "plan_count": plan_count,
-                        "year": p.year,
-                    }
-
-            uni_dict["majors"] = list(major_map.values())
+            major_result = await session.execute(major_stmt)
+            major_rows = major_result.scalars().all()
+            uni_dict["majors"] = [m.to_dict() for m in major_rows]
             return uni_dict
         except Exception as e:
             logger.error(f"get_university_detail 查询失败 [{university_name}]: {e}")
@@ -355,41 +329,41 @@ class ZhiyuanRepository:
         session: AsyncSession,
         *,
         university_name: str,
-        province: str,
-        subject_type: str,
+        province: str = "",
+        subject_type: str = "",
         years: int = 3,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         查询院校历年录取分数/位次。
 
         Args:
             session: 数据库会话
             university_name: 院校全名
-            province: 省份
-            subject_type: 科类
+            province: 省份（可空，空时不过滤）
+            subject_type: 科类（可空，空时不过滤）
             years: 查询近 N 年数据（默认 3）
 
         Returns:
             录取分数记录列表
         """
-        subj_filter = self._subject_type_filter(subject_type)
-        if subj_filter is None:
-            return []
-
         try:
-            current_year = datetime.now(timezone.utc).year
+            current_year = datetime.now(UTC).year
             year_start = current_year - years
 
-            # Join University 以按名称过滤
+            # 构建条件列表（空值跳过对应过滤）
+            conditions: list[Any] = []
+            conditions.append(University.name == university_name)
+            if province:
+                conditions.append(AdmissionScore.province == province)
+            subj_filter = self._subject_type_filter(subject_type) if subject_type else None
+            if subj_filter:
+                conditions.append(AdmissionScore.subject_type == subj_filter)
+            conditions.append(AdmissionScore.year >= year_start)
+
             stmt = (
                 select(AdmissionScore)
                 .join(University, AdmissionScore.university_id == University.id)
-                .where(
-                    University.name == university_name,
-                    AdmissionScore.province == province,
-                    AdmissionScore.subject_type == subj_filter,
-                    AdmissionScore.year >= year_start,
-                )
+                .where(*conditions)
                 .order_by(AdmissionScore.year.desc())
             )
             result = await session.execute(stmt)
@@ -402,8 +376,10 @@ class ZhiyuanRepository:
                     "avg_score": r.avg_score,
                     "max_score": r.max_score,
                     "min_rank": r.min_rank,
-                    "avg_rank": getattr(r, "avg_rank", 0),
+                    "avg_rank": r.min_rank,
                     "batch": r.batch,
+                    "province": r.province,
+                    "subject_type": r.subject_type,
                 }
                 for r in rows
             ]
@@ -420,7 +396,7 @@ class ZhiyuanRepository:
         score: int,
         province: str,
         subject_type: str,
-    ) -> Optional[Dict[str, int]]:
+    ) -> dict[str, int] | None:
         """
         根据分数估算省位次及同分人数。
 
@@ -449,9 +425,20 @@ class ZhiyuanRepository:
             raise InvalidParameterError(f"非法科类: {subject_type}")
 
         try:
-            from .zhiyuan_models import ScoreRank
+            # 动态查询数据库中最近可用年份，避免硬编码导致无数据时查空
+            latest_year_stmt = (
+                select(func.max(ScoreRank.year))
+                .where(
+                    ScoreRank.province == province,
+                    ScoreRank.subject_type == subj_filter,
+                )
+            )
+            latest_year_result = await session.execute(latest_year_stmt)
+            current_year = latest_year_result.scalar()
+            if current_year is None:
+                logger.warning(f"get_score_rank 无位次数据: {province}/{subj_filter}")
+                return None
 
-            current_year = datetime.now(timezone.utc).year - 1  # 最近一年
             stmt = (
                 select(ScoreRank)
                 .where(
@@ -511,14 +498,14 @@ class ZhiyuanRepository:
         subject_type: str,
         subject_combination: str = "",
         max_universities: int = _PLAN_CATEGORY_LIMIT * 3,  # 默认 30
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         生成冲稳保三档志愿方案。
 
         核心算法：
         1. 查询目标省份+科类的所有院校录取数据（join University 获取院校名/层次/省份）
         2. 计算 ratio = 用户位次 / 院校历年平均位次
-        3. 按 ratio 分三档：rush(0.8~1.3), stable(0.5~0.8), safe(<0.5)
+        3. 按 ratio 分三档：rush(1.0~1.3), stable(0.75~1.0), safe(0.4~0.75)
         4. 每档按 ratio 升序排列（位次越接近越优先）
         5. 批量加载专业数据（消除 N+1 查询）
 
@@ -553,7 +540,7 @@ class ZhiyuanRepository:
         try:
             # Step 1: 查询目标省份+科类的所有院校录取数据
             # 通过 JOIN University 表获取院校名称、层次、所在省份
-            current_year = datetime.now(timezone.utc).year
+            current_year = datetime.now(UTC).year
             year_start = current_year - 3
 
             scores_stmt = (
@@ -581,9 +568,9 @@ class ZhiyuanRepository:
 
             # Step 2: 按院校聚合，计算平均位次与 ratio
             # score_rows: [(university_id, min_rank, name, level, province), ...]
-            uni_rank_map: Dict[str, List[int]] = {}
-            uni_level_map: Dict[str, str] = {}
-            uni_province_map: Dict[str, str] = {}
+            uni_rank_map: dict[str, list[int]] = {}
+            uni_level_map: dict[str, str] = {}
+            uni_province_map: dict[str, str] = {}
 
             for row in score_rows:
                 uid, min_r, name, level_val, prov = row
@@ -595,7 +582,7 @@ class ZhiyuanRepository:
                         uni_province_map[name] = prov
 
             # 计算每所院校的平均位次与 ratio
-            scored: List[Dict[str, Any]] = []
+            scored: list[dict[str, Any]] = []
             for name, ranks in uni_rank_map.items():
                 if not ranks:
                     continue
@@ -610,23 +597,28 @@ class ZhiyuanRepository:
                 })
 
             # Step 3: 分档
-            rush: List[Dict[str, Any]] = []   # 冲：0.8 <= ratio <= 1.3
-            stable: List[Dict[str, Any]] = [] # 稳：0.5 <= ratio < 0.8
-            safe: List[Dict[str, Any]] = []   # 保：ratio < 0.5
+            # 冲：1.0 < ratio <= 1.3（用户略低于院校，概率 35-55%）
+            # 稳：0.75 <= ratio <= 1.0（匹配区间，概率 70-85%）
+            # 保：0.4 <= ratio < 0.75（用户高于院校，概率 85-95%）
+            # ratio > 1.3 或 ratio < 0.4：差距过大，过滤
+            rush: list[dict[str, Any]] = []
+            stable: list[dict[str, Any]] = []
+            safe: list[dict[str, Any]] = []
 
             for item in scored:
                 ratio = item["rank_ratio"]
-                if 0.8 <= ratio <= 1.3:
+                if 1.0 < ratio <= 1.3:
                     rush.append(item)
-                elif 0.5 <= ratio < 0.8:
+                elif 0.75 <= ratio <= 1.0:
                     stable.append(item)
-                elif ratio < 0.5:
+                elif 0.4 <= ratio < 0.75:
                     safe.append(item)
+                # ratio > 1.3 或 ratio < 0.4：过滤
 
-            # 排序：ratio 升序（越接近用户位次越靠前）
+            # 排序：冲按 ratio 升序（接近1的优先）；稳按接近1；保按 ratio 降序
             rush.sort(key=lambda x: x["rank_ratio"])
-            stable.sort(key=lambda x: x["rank_ratio"])
-            safe.sort(key=lambda x: x["rank_ratio"])
+            stable.sort(key=lambda x: abs(x["rank_ratio"] - 1.0))
+            safe.sort(key=lambda x: -x["rank_ratio"])
 
             # 截断到 max_universities（三档均分）
             per_category = max(max_universities // 3, 1)
@@ -668,8 +660,8 @@ class ZhiyuanRepository:
     async def _batch_load_majors(
         self,
         session: AsyncSession,
-        university_names: List[str],
-    ) -> Dict[str, List[Dict[str, Any]]]:
+        university_names: list[str],
+    ) -> dict[str, list[dict[str, Any]]]:
         """
         批量加载多所院校的招生专业（单次 SQL + join Major，消除 N+1 查询）。
 
@@ -684,8 +676,6 @@ class ZhiyuanRepository:
             return {}
 
         try:
-            from .zhiyuan_models import Major
-
             stmt = (
                 select(
                     University.name,
@@ -704,8 +694,8 @@ class ZhiyuanRepository:
             rows = result.all()
 
             # 分组并去重
-            majors_map: Dict[str, List[Dict[str, Any]]] = {}
-            seen: Dict[str, set] = {}  # {university_name: {已添加的 major_name}}
+            majors_map: dict[str, list[dict[str, Any]]] = {}
+            seen: dict[str, set] = {}  # {university_name: {已添加的 major_name}}
 
             for uni_name, major_name, plan_count in rows:
                 if uni_name not in seen:
@@ -734,9 +724,9 @@ class ZhiyuanRepository:
         session: AsyncSession,
         *,
         start_entity: str,
-        relation_type: Optional[str] = None,
+        relation_type: str | None = None,
         depth: int = 2,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         知识图谱关系查询。
 
@@ -754,9 +744,7 @@ class ZhiyuanRepository:
         depth = min(max(depth, 1), 4)
 
         try:
-            from .zhiyuan_models import Major
-
-            results: List[Dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
 
             # 先尝试作为院校名查找
             uni_stmt = select(University).where(University.name == start_entity)
@@ -764,27 +752,39 @@ class ZhiyuanRepository:
             uni_row = uni_result.scalar_one_or_none()
 
             if uni_row is None:
-                # 尝试作为专业名查询
+                # 尝试作为专业名查询 —— 批量加载，消除 N+1
                 major_stmt = (
-                    select(Major)
+                    select(Major.id, Major.name, Major.university_id, University.name.label("uni_name"))
+                    .join(University, Major.university_id == University.id)
                     .where(Major.name.ilike(f"%{start_entity}%"))
                     .limit(10)
                 )
                 major_result = await session.execute(major_stmt)
-                major_rows = major_result.scalars().all()
+                major_rows = major_result.all()
 
                 if not major_rows:
                     return []
 
-                for m in major_rows:
-                    # 查该专业所属院校
-                    uni_for_major_stmt = select(University).where(
-                        University.id == m.university_id
+                # 收集所有相关院校 ID，批量查其他专业
+                uni_ids = {row.university_id for row in major_rows}
+                if depth >= 2 and uni_ids:
+                    other_majors_stmt = (
+                        select(Major.university_id, Major.name)
+                        .where(
+                            Major.university_id.in_(uni_ids),
+                        )
+                        .limit(100)
                     )
-                    uni_for_major = await session.execute(uni_for_major_stmt)
-                    uni_m = uni_for_major.scalar_one_or_none()
-                    uni_name = uni_m.name if uni_m else f"院校{m.university_id}"
+                    other_result = await session.execute(other_majors_stmt)
+                    # 按院校分组
+                    uni_majors_map: dict[int, list[str]] = {}
+                    for uid, mname in other_result.all():
+                        uni_majors_map.setdefault(uid, []).append(mname)
+                else:
+                    uni_majors_map = {}
 
+                for row in major_rows:
+                    uni_name = row.uni_name or f"院校{row.university_id}"
                     results.append({
                         "start": start_entity,
                         "relation": "belongs_to",
@@ -792,23 +792,16 @@ class ZhiyuanRepository:
                         "depth": 1,
                     })
                     if depth >= 2:
-                        # 二级扩展：该院校的其他专业
-                        more_stmt = (
-                            select(Major.name)
-                            .where(
-                                Major.university_id == m.university_id,
-                                Major.id != m.id,
-                            )
-                            .limit(10)
-                        )
-                        more_result = await session.execute(more_stmt)
-                        for (mname,) in more_result.all():
-                            results.append({
-                                "start": uni_name,
-                                "relation": "has_major",
-                                "end": mname,
-                                "depth": 2,
-                            })
+                        seen_names = {row.name}
+                        for mname in uni_majors_map.get(row.university_id, []):
+                            if mname not in seen_names:
+                                seen_names.add(mname)
+                                results.append({
+                                    "start": uni_name,
+                                    "relation": "has_major",
+                                    "end": mname,
+                                    "depth": 2,
+                                })
             else:
                 uni_dict = uni_row.to_dict()
                 # 一级：该院校的专业
@@ -886,11 +879,13 @@ class ZhiyuanRepository:
         *,
         question: str,
         top_k: int = 5,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         政策知识库语义检索。
 
-        当前为关键词匹配实现，后续可接入向量检索。
+        [已知限制] 当前为关键词匹配实现，未接入向量检索。
+        政策文档存放在 data/policies/ 目录但未导入知识库向量索引。
+        计划后续接入 Milvus 向量检索以提升语义匹配精度。
 
         Args:
             session: 数据库会话
@@ -904,10 +899,8 @@ class ZhiyuanRepository:
             raise InvalidParameterError("问题至少需要 2 个字符")
 
         try:
-            from .zhiyuan_models import Major
-
             keywords = question.strip().split()
-            results: List[Dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
 
             # 院校名称匹配
             uni_conditions = []
@@ -959,44 +952,149 @@ class ZhiyuanRepository:
 
     async def get_health(
         self, session: AsyncSession
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         系统健康检查。
 
-        检查数据库连接及各表数据量（单次批量 COUNT）。
+        检查数据库连接、各表数据量，以及字段级数据质量问题
+        （如缺失重点学科、缺失硕士点、无专业数据等）。
 
         Returns:
-            {"status": "healthy"|"degraded", "tables": {...}, "issues": {...}}
+            {"status": "healthy"|"degraded", "health_score": int, "tables": {...}, "issues": {...}}
         """
         try:
-            from .zhiyuan_models import Major, ScoreRank
-
-            # 批量 COUNT（单次查询合并三个表的行数统计）
+            # 表级 COUNT
             uni_count_stmt = select(func.count()).select_from(University)
             score_count_stmt = select(func.count()).select_from(AdmissionScore)
             plan_count_stmt = select(func.count()).select_from(EnrollmentPlan)
+            major_count_stmt = select(func.count()).select_from(Major)
 
             uni_count = (await session.execute(uni_count_stmt)).scalar() or 0
             score_count = (await session.execute(score_count_stmt)).scalar() or 0
             plan_count = (await session.execute(plan_count_stmt)).scalar() or 0
+            major_count = (await session.execute(major_count_stmt)).scalar() or 0
 
             tables = {
                 "universities": uni_count,
                 "admission_scores": score_count,
                 "enrollment_plans": plan_count,
+                "majors": major_count,
             }
 
-            issues: Dict[str, str] = {}
-            if uni_count == 0:
-                issues["universities"] = "院校表为空"
-            if score_count == 0:
-                issues["admission_scores"] = "录取分数表为空"
-            if plan_count == 0:
-                issues["enrollment_plans"] = "招生计划表为空"
+            # 字段级数据质量问题（与前端 healthItems labels 对齐）
+            issues: dict[str, int] = {}
 
-            status = "healthy" if not issues else "degraded"
-            # 健康度评分：核心表每张非空得固定分，满分 99（保留 1 分给扩展表）
-            health_score = (_HEALTH_CORE_TABLE_COUNT - len(issues)) * _HEALTH_SCORE_PER_TABLE
+            if uni_count > 0:
+                # 缺失重点学科的院校数
+                no_disc = (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(University)
+                        .where(
+                            (University.key_disciplines == "")
+                            | (University.key_disciplines.is_(None))
+                        )
+                    )
+                ).scalar() or 0
+                if no_disc > 0:
+                    issues["no_disciplines"] = no_disc
+
+                # 缺失硕士点
+                no_master = (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(University)
+                        .where(University.master_points == 0)
+                    )
+                ).scalar() or 0
+                if no_master > 0:
+                    issues["no_master"] = no_master
+
+                # 缺失博士点
+                no_doctor = (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(University)
+                        .where(University.doctor_points == 0)
+                    )
+                ).scalar() or 0
+                if no_doctor > 0:
+                    issues["no_doctor"] = no_doctor
+
+                # 缺失官网
+                no_website = (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(University)
+                        .where(
+                            (University.website == "")
+                            | (University.website.is_(None))
+                        )
+                    )
+                ).scalar() or 0
+                if no_website > 0:
+                    issues["no_website"] = no_website
+
+                # 无专业数据的院校数
+                no_majors = (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(University)
+                        .where(
+                            ~University.id.in_(
+                                select(Major.university_id).distinct()
+                            )
+                        )
+                    )
+                ).scalar() or 0
+                if no_majors > 0:
+                    issues["no_majors"] = no_majors
+
+                # 无录取分数的院校数
+                no_scores = (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(University)
+                        .where(
+                            ~University.id.in_(
+                                select(AdmissionScore.university_id).distinct()
+                            )
+                        )
+                    )
+                ).scalar() or 0
+                if no_scores > 0:
+                    issues["no_scores"] = no_scores
+
+                # 无招生计划的院校数
+                no_plans = (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(University)
+                        .where(
+                            ~University.id.in_(
+                                select(EnrollmentPlan.university_id).distinct()
+                            )
+                        )
+                    )
+                ).scalar() or 0
+                if no_plans > 0:
+                    issues["no_plans"] = no_plans
+            else:
+                issues["empty_data"] = 1
+
+            status = "healthy" if not issues or (
+                len(issues) == 1 and "empty_data" not in issues
+            ) else "degraded"
+            if uni_count == 0:
+                status = "degraded"
+
+            # 健康度评分：基础分 50 + 数据质量分 50
+            base_score = 50 if uni_count > 0 else 0
+            if uni_count > 0:
+                quality_deduction = sum(issues.values()) / max(uni_count, 1) * 50
+                health_score = max(0, int(base_score + 50 - quality_deduction))
+            else:
+                health_score = 0
 
             return {
                 "status": status,
@@ -1015,7 +1113,7 @@ class ZhiyuanRepository:
 
     async def get_statistics(
         self, session: AsyncSession
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         获取系统统计数据（院校数、覆盖省份数、数据年份范围等）。
 
@@ -1069,7 +1167,7 @@ class ZhiyuanRepository:
         university_name: str,
         province: str = "",
         subject_type: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         查询指定院校在指定省份+科类的历年录取详情。
 
@@ -1085,7 +1183,7 @@ class ZhiyuanRepository:
             if uni_row is None:
                 raise DataNotFoundError(f"院校不存在: {university_name}")
 
-            scores: List[Dict[str, Any]] = []
+            scores: list[dict[str, Any]] = []
             if province and subject_type:
                 scores = await self.query_admission_scores(
                     session,
@@ -1110,7 +1208,7 @@ class ZhiyuanRepository:
                         "avg_score": r.avg_score,
                         "max_score": r.max_score,
                         "min_rank": r.min_rank,
-                        "avg_rank": getattr(r, "avg_rank", 0),
+                        "avg_rank": r.min_rank,
                         "batch": r.batch,
                         "province": r.province,
                         "subject_type": r.subject_type,
@@ -1119,7 +1217,7 @@ class ZhiyuanRepository:
                 ]
 
             subj_filter = self._subject_type_filter(subject_type) if subject_type else None
-            plans: List[Dict[str, Any]] = []
+            plans: list[dict[str, Any]] = []
             if subj_filter and province:
                 plan_stmt = (
                     select(
@@ -1181,13 +1279,272 @@ class ZhiyuanRepository:
         """
         invalidate_cache("plan:", "universities:", "stats:")
 
+    # ---- 专业推荐 -----------------------------------------------------------
+
+    async def recommend_majors(
+        self,
+        session: AsyncSession,
+        *,
+        score: int,
+        province: str,
+        subject_type: str,
+        interests: str = "",
+    ) -> dict[str, Any]:
+        """
+        根据分数和兴趣推荐适合的专业。
+
+        逻辑：先估算位次 → 生成志愿方案 → 从方案院校中提取专业列表。
+        兴趣方向非空时，匹配的专业优先排列。
+
+        Returns:
+            {"recommendations": [...], "total": int, "user_rank": {...}}
+        """
+        if province and province not in _VALID_PROVINCES:
+            raise InvalidParameterError(f"非法省份: {province}")
+        if subject_type and subject_type not in _VALID_SUBJECT_TYPES:
+            raise InvalidParameterError(f"非法科类: {subject_type}")
+        if score < SCORE_MIN or score > SCORE_MAX:
+            raise InvalidParameterError(f"分数需在 {SCORE_MIN}-{SCORE_MAX} 之间")
+
+        try:
+            rank = await self.get_score_rank(
+                session, score=score, province=province, subject_type=subject_type
+            )
+            if rank is None:
+                raise DataNotFoundError(
+                    f"无法估算 {province} {subject_type} {score}分 的位次"
+                )
+
+            rank_value = rank["rank"] if isinstance(rank, dict) else rank
+
+            plan = await self.generate_plan(
+                session,
+                score=score,
+                rank=rank_value,
+                province=province,
+                subject_type=subject_type,
+            )
+
+            all_majors: list[dict[str, Any]] = []
+            seen_majors: set[str] = set()
+
+            for category in ("rush", "stable", "safe"):
+                for uni in plan.get(category, []):
+                    for major in uni.get("majors", []):
+                        mname = major.get("major_name", "")
+                        if mname and mname not in seen_majors:
+                            seen_majors.add(mname)
+                            all_majors.append({
+                                "major_name": mname,
+                                "plan_count": major.get("plan_count", 0),
+                                "university_name": uni.get("university_name", ""),
+                                "category": category,
+                            })
+
+            if interests:
+                interest_lower = interests.strip().lower()
+                matched = [
+                    m for m in all_majors
+                    if interest_lower in m["major_name"].lower()
+                ]
+                if matched:
+                    matched_set = {id(m) for m in matched}
+                    all_majors = matched + [
+                        m for m in all_majors if id(m) not in matched_set
+                    ]
+
+            return {
+                "recommendations": all_majors[:20],
+                "total": len(all_majors),
+                "user_rank": rank,
+            }
+        except RepositoryError:
+            raise
+        except Exception as e:
+            logger.error(f"recommend_majors 失败: {e}")
+            raise DatabaseError(f"专业推荐失败: {e}") from e
+
+    # ---- 省份规则 -----------------------------------------------------------
+
+    async def get_province_rule(
+        self,
+        session: AsyncSession,
+        province: str,
+    ) -> dict[str, Any]:
+        """
+        获取指定省份的最新填报规则。
+
+        Returns:
+            省份规则 dict（含 mode/batch_count/max_per_batch/subject_mode 等）
+        """
+        if not province:
+            raise InvalidParameterError("省份不能为空")
+        if province not in _VALID_PROVINCES:
+            raise InvalidParameterError(f"非法省份: {province}")
+
+        try:
+            stmt = (
+                select(ProvinceRule)
+                .where(ProvinceRule.province == province)
+                .order_by(ProvinceRule.year.desc())
+                .limit(1)
+            )
+            result = await session.execute(stmt)
+            row = result.scalar_one_or_none()
+            if row is None:
+                raise DataNotFoundError(f"未找到 {province} 的填报规则")
+            return row.to_dict()
+        except RepositoryError:
+            raise
+        except Exception as e:
+            logger.error(f"get_province_rule 失败 [{province}]: {e}")
+            raise DatabaseError(f"省份规则查询失败: {e}") from e
+
+    # ---- 专业对比 -----------------------------------------------------------
+
+    async def compare_majors(
+        self,
+        session: AsyncSession,
+        *,
+        major_names: list[str],
+        university_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        对比多所院校的同一专业（或多个专业）。
+
+        Args:
+            major_names: 专业名称列表（至少 1 个，最多 10 个）
+            university_names: 院校名称列表（可选，不传则查所有院校）
+
+        Returns:
+            {"comparisons": [...], "count": int}
+        """
+        if not major_names:
+            raise InvalidParameterError("请至少提供一个专业名称")
+        if len(major_names) > 10:
+            raise InvalidParameterError("最多同时对比 10 个专业")
+
+        try:
+            conditions = [Major.name.in_(major_names)]
+            if university_names:
+                if len(university_names) > 10:
+                    raise InvalidParameterError("最多同时对比 10 所院校")
+                conditions.append(
+                    Major.university_id.in_(
+                        select(University.id).where(
+                            University.name.in_(university_names)
+                        )
+                    )
+                )
+
+            stmt = (
+                select(Major, University.name.label("university_name"))
+                .join(University, Major.university_id == University.id)
+                .where(*conditions)
+                .order_by(Major.name, University.name)
+                .limit(200)
+            )
+            result = await session.execute(stmt)
+
+            comparisons = [
+                {**m.to_dict(), "university_name": uni_name}
+                for m, uni_name in result.all()
+            ]
+
+            if not comparisons:
+                raise DataNotFoundError("未找到匹配的专业数据")
+
+            return {"comparisons": comparisons, "count": len(comparisons)}
+        except RepositoryError:
+            raise
+        except Exception as e:
+            logger.error(f"compare_majors 失败: {e}")
+            raise DatabaseError(f"专业对比查询失败: {e}") from e
+
+    # ---- 选科检查 -----------------------------------------------------------
+
+    async def check_subject(
+        self,
+        session: AsyncSession,
+        *,
+        subject_combination: str,
+        university_name: str = "",
+        major_name: str = "",
+    ) -> dict[str, Any]:
+        """
+        检查选科组合是否满足院校/专业的选科要求。
+
+        Args:
+            subject_combination: 考生选科组合（如"物理+化学+生物"）
+            university_name: 院校名称（可选，不传则查所有）
+            major_name: 专业名称（可选模糊匹配）
+
+        Returns:
+            {"checked": [...], "total": int, "all_match": bool}
+            checked 列表每项含 major_name/university_name/subject_requirement/matched
+        """
+        if not subject_combination or not subject_combination.strip():
+            raise InvalidParameterError("选科组合不能为空")
+
+        try:
+            conditions = [Major.subject_requirement.isnot(None), Major.subject_requirement != ""]
+            if university_name:
+                conditions.append(
+                    Major.university_id.in_(
+                        select(University.id).where(University.name == university_name)
+                    )
+                )
+            if major_name:
+                conditions.append(Major.name.ilike(f"%{major_name}%"))
+
+            stmt = (
+                select(Major, University.name.label("university_name"))
+                .join(University, Major.university_id == University.id)
+                .where(*conditions)
+                .order_by(Major.name)
+                .limit(100)
+            )
+            result = await session.execute(stmt)
+
+            user_subjects = set(
+                s.strip() for s in subject_combination.split("+") if s.strip()
+            )
+
+            checked: list[dict[str, Any]] = []
+            all_match = True
+            for m, uni_name in result.all():
+                req = m.subject_requirement or ""
+                required_subjects = set(
+                    s.strip() for s in req.split("+") if s.strip()
+                )
+                matched = required_subjects.issubset(user_subjects) if required_subjects else True
+                if not matched:
+                    all_match = False
+                checked.append({
+                    "major_name": m.name,
+                    "university_name": uni_name,
+                    "subject_requirement": req,
+                    "matched": matched,
+                })
+
+            return {
+                "checked": checked,
+                "total": len(checked),
+                "all_match": all_match,
+            }
+        except RepositoryError:
+            raise
+        except Exception as e:
+            logger.error(f"check_subject 失败: {e}")
+            raise DatabaseError(f"选科检查失败: {e}") from e
+
 
 # ---------------------------------------------------------------------------
 # 模块级辅助函数
 # ---------------------------------------------------------------------------
 
 
-def _empty_plan() -> Dict[str, Any]:
+def _empty_plan() -> dict[str, Any]:
     """返回空志愿方案结构。"""
     return {
         "rush": [],

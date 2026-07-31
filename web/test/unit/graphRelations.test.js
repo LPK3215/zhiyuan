@@ -6,9 +6,9 @@ import {
   isRelationToken,
 } from '../../src/constants/graphRelations.js'
 
-test('GRAPH_RELATION_OPTIONS 含全部后端白名单 token', () => {
+test('GRAPH_RELATION_OPTIONS 含全部后端实际产生的关系 token', () => {
   const values = GRAPH_RELATION_OPTIONS.map((o) => o.value)
-  for (const token of ['has_major', 'belongs_to', 'employed_by', 'requires']) {
+  for (const token of ['has_major', 'belongs_to', 'same_level', 'same_province']) {
     assert.ok(values.includes(token), `缺少 token ${token}`)
   }
   // 空串代表「全部关系」必须存在
@@ -25,14 +25,20 @@ test('isRelationToken 空串合法（全部关系）', () => {
 })
 
 test('isRelationToken 接受白名单 token', () => {
-  for (const token of ['has_major', 'belongs_to', 'employed_by', 'requires']) {
+  for (const token of ['has_major', 'belongs_to', 'same_level', 'same_province']) {
     assert.equal(isRelationToken(token), true)
   }
 })
 
 test('isRelationToken 拒绝中文与任意串', () => {
   // 前端若误把中文 label 当 value 发送，后端会退化为「全部关系」，此处提前拦截
-  assert.equal(isRelationToken('开设'), false)
+  assert.equal(isRelationToken('开设专业'), false)
   assert.equal(isRelationToken('random'), false)
   assert.equal(isRelationToken(null), false)
+})
+
+test('isRelationToken 拒绝已废弃的旧 token', () => {
+  // employed_by 和 requires 已从后端移除，不应再被接受
+  assert.equal(isRelationToken('employed_by'), false)
+  assert.equal(isRelationToken('requires'), false)
 })

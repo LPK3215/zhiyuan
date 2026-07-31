@@ -8,10 +8,10 @@
  */
 export const GRAPH_RELATION_OPTIONS = [
   { value: '', label: '全部关系' },
-  { value: 'has_major', label: '开设' },
-  { value: 'belongs_to', label: '属于' },
-  { value: 'employed_by', label: '对应职业' },
-  { value: 'requires', label: '前置学科' },
+  { value: 'has_major', label: '开设专业' },
+  { value: 'belongs_to', label: '所属院校' },
+  { value: 'same_level', label: '同层次院校' },
+  { value: 'same_province', label: '同省院校' },
 ]
 
 /** 合法的英文 token 集合（与后端白名单对齐，便于前端提前校验）。 */

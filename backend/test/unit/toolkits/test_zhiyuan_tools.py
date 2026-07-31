@@ -1,31 +1,47 @@
-"""智愿 tool 层单元测试（路径加载 + mock 桩，不依赖 Docker/yuxi 全量依赖）"""
+"""智愿 tool 层单元测试（路径加载 + mock 桩，不依赖 Docker/yuxi 全量依赖）
+
+测试当前 zhiyuan_tools.py 中的工具函数：
+  search_universities / get_university_detail / query_admission_scores /
+  estimate_rank / generate_plan / compare_universities / query_knowledge_graph /
+  search_policy / analyze_admission_probability / get_system_status / recommend_majors
+"""
+
+from __future__ import annotations
 
 import importlib.util
 import sys
 import types
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# ---- 桩模块：避免 tools 顶部 import yuxi.agents.toolkits.registry / yuxi.utils 拉入重依赖 ----
+# ---- 桩模块：避免 tools 顶部 import 拉入重依赖 ----
 def _stub(name):
     m = types.ModuleType(name)
     sys.modules[name] = m
     return m
 
-_stub("yuxi.agents.toolkits.registry")  # 提供 @tool 装饰器依赖的模块占位
-# @tool 装饰器：测试桩，原样返回函数
-sys.modules["yuxi.agents.toolkits.registry"].tool = lambda *a, **k: (lambda f: f)
-_stub("yuxi.utils")                      # 提供 logger 依赖的模块占位
-sys.modules["yuxi.utils"].logger = types.SimpleNamespace(error=lambda *a, **k: None)
-# tools 内部 try: from yuxi.knowledge.runtime import knowledge_base —— 该分支在测试中被 mock
-_stub("yuxi.knowledge.runtime")
-_stub("yuxi.storage.postgres.manager")
-_stub("yuxi.repositories.zhiyuan_repository")
-# stub yuxi.storage.neo4j so tools can import get_shared_neo4j_connection / neo4j_read
-_neo4j_stub = _stub("yuxi.storage.neo4j")
-_neo4j_stub.get_shared_neo4j_connection = lambda: None
-_neo4j_stub.neo4j_read = lambda *a, **k: []
+# @tool 装饰器桩：原样返回函数（不创建 langchain StructuredTool）
+_registry_stub = _stub("yuxi.agents.toolkits.registry")
+_registry_stub.tool = lambda *a, **k: (lambda f: f)
+
+# pg_manager 桩
+_pg_stub = _stub("yuxi.storage.postgres.manager")
+_pg_stub.pg_manager = MagicMock()
+
+# zhiyuan_repository 桩
+_repo_stub = _stub("yuxi.repositories.zhiyuan_repository")
+_repo_stub.ZhiyuanRepository = MagicMock()
+_repo_stub.zhiyuan_repository = MagicMock()
+_repo_repo = MagicMock()
+_repo_stub.zhiyuan_repository = _repo_repo
+_repo_stub.estimate_admission_probability = lambda ratio: 0.95 if ratio <= 0.7 else (0.85 if ratio <= 0.9 else (0.70 if ratio <= 1.0 else (0.55 if ratio <= 1.1 else (0.35 if ratio <= 1.3 else 0.15))))
+
+# 异常类桩
+for _exc_name in ("DatabaseError", "DataNotFoundError", "InvalidParameterError", "RepositoryError"):
+    _exc = type(_exc_name, (Exception,), {})
+    setattr(_repo_stub, _exc_name, _exc)
 
 
 def _load_tools():
@@ -48,175 +64,337 @@ def _load_tools():
 _tools = _load_tools()
 
 
-@pytest.mark.unit
-def test_query_graph_empty_entity_rejected(monkeypatch):
-    # 空实体名应在校验分支被拒（需先提供运行中的 Neo4j 连接以越过“服务未就绪”早返回）
-    class FakeConn:
-        def is_running(self):
-            return True
+# ---- 辅助：构造 mock async context manager ----
 
-        @property
-        def driver(self):
-            return object()
 
-    neo4j_module = sys.modules["yuxi.storage.neo4j"]
-    monkeypatch.setattr(neo4j_module, "get_shared_neo4j_connection", lambda: FakeConn())
+def _make_session_ctx():
+    """创建一个 mock 的 async context manager，模拟 pg_manager.get_async_session_context()"""
+    session = MagicMock()
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=session)
+    ctx.__aexit__ = AsyncMock(return_value=None)
+    return ctx, session
 
-    async def run():
-        return await _tools.query_graph("", "has_major", 2)
 
-    import asyncio
-
-    result = asyncio.run(run())
-    assert "不能为空" in result
-    assert "服务未就绪" not in result
+# ========== search_universities 测试 ==========
 
 
 @pytest.mark.unit
-def test_query_graph_overlong_entity_rejected(monkeypatch):
-    class FakeConn:
-        def is_running(self):
-            return True
-
-        @property
-        def driver(self):
-            return object()
-
-    neo4j_module = sys.modules["yuxi.storage.neo4j"]
-    monkeypatch.setattr(neo4j_module, "get_shared_neo4j_connection", lambda: FakeConn())
-
-    async def run():
-        return await _tools.query_graph("x" * 101, "has_major", 2)
-
-    import asyncio
-
-    result = asyncio.run(run())
-    assert "过长" in result
+@pytest.mark.asyncio
+async def test_search_universities_success():
+    ctx, session = _make_session_ctx()
+    mock_result = {"items": [{"name": "清华大学", "level": "985"}], "total": 1}
+    with patch.object(_tools.pg_manager, "get_async_session_context", return_value=ctx), \
+         patch.object(_tools.zhiyuan_repository, "list_universities", new=AsyncMock(return_value=mock_result)):
+        result = await _tools.search_universities(keyword="清华", limit=10)
+    assert result["success"] is True
+    assert result["data"]["total"] == 1
 
 
 @pytest.mark.unit
-def test_query_graph_depth_clamped(monkeypatch):
-    """depth 超出 [1,4] 应被钳制；用 spy 捕获最终传入的 Cypher 验证 *1..4。"""
+@pytest.mark.asyncio
+async def test_search_universities_limit_capped():
+    """limit 超过 50 应被钳制为 50。"""
+    ctx, session = _make_session_ctx()
     captured = {}
+    async def fake_list(session, **kwargs):
+        captured["limit"] = kwargs.get("limit")
+        return {"items": [], "total": 0}
+    with patch.object(_tools.pg_manager, "get_async_session_context", return_value=ctx), \
+         patch.object(_tools.zhiyuan_repository, "list_universities", new=fake_list):
+        await _tools.search_universities(limit=999)
+    assert captured["limit"] == 50
 
-    # Mock Neo4j connection manager to avoid real DB dependency
-    class FakeConn:
-        def is_running(self):
-            return True
 
-        @property
-        def driver(self):
-            return object()
-
-    def fake_neo4j_read(driver, cypher, **kwargs):
-        captured["cypher"] = cypher
-        captured["params"] = kwargs
-        return []
-
-    # Patch get_shared_neo4j_connection and neo4j_read in the tools module
-    neo4j_module = sys.modules["yuxi.storage.neo4j"]
-    monkeypatch.setattr(neo4j_module, "get_shared_neo4j_connection", lambda: FakeConn())
-    monkeypatch.setattr(neo4j_module, "neo4j_read", fake_neo4j_read)
-
-    async def run():
-        return await _tools.query_graph("计算机科学与技术", "has_major", 100)
-
-    import asyncio
-
-    result = asyncio.run(run())
-    # 深度被钳制为 4：Cypher 应包含 *1..4 而非 *1..100
-    assert "*1..4" in captured["cypher"]
-    assert "*1..100" not in captured["cypher"]
-    # Cypher 应使用正确的变长路径语法 [r*1..4] 或 [r:RELATION*1..4]
-    assert "[r" in captured["cypher"]
-    assert "]" in captured["cypher"]
-    # 实体名被 trim 后传入参数
-    assert captured["params"]["start_entity"] == "计算机科学与技术"
+# ========== get_university_detail 测试 ==========
 
 
 @pytest.mark.unit
-def test_query_graph_input_schema_depth_upper_bound():
-    """QueryGraphInput 的 depth 上限应为 4（与实现钳制值、router le=4 对齐）。"""
-    schema = _tools.QueryGraphInput
-    # depth=4 合法
-    assert schema(start_entity="清华大学", depth=4).depth == 4
-    # depth=5 非法
-    with pytest.raises(Exception):
-        schema(start_entity="清华大学", depth=5)
+@pytest.mark.asyncio
+async def test_get_university_detail_success():
+    ctx, session = _make_session_ctx()
+    mock_detail = {"name": "清华大学", "level": "985", "majors": []}
+    with patch.object(_tools.pg_manager, "get_async_session_context", return_value=ctx), \
+         patch.object(_tools.zhiyuan_repository, "get_university_detail", new=AsyncMock(return_value=mock_detail)):
+        result = await _tools.get_university_detail("清华大学")
+    assert result["success"] is True
+    assert result["data"]["name"] == "清华大学"
 
 
 @pytest.mark.unit
-def test_generate_plan_rejects_nonnumeric_rank():
-    """profile 中 rank 为非数字字符串时应返回友好错误，而非异常文本。"""
-    import asyncio
-    import json as _json
+@pytest.mark.asyncio
+async def test_get_university_detail_empty_name():
+    result = await _tools.get_university_detail("")
+    assert result["success"] is False
+    assert "不能为空" in result["error"]
 
-    result = asyncio.run(
-        _tools.generate_application_plan(_json.dumps({"rank": "abc", "province": "河南"}))
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_university_detail_not_found():
+    ctx, session = _make_session_ctx()
+    with patch.object(_tools.pg_manager, "get_async_session_context", return_value=ctx), \
+         patch.object(_tools.zhiyuan_repository, "get_university_detail", new=AsyncMock(return_value=None)):
+        result = await _tools.get_university_detail("不存在的大学")
+    assert result["success"] is False
+    assert "未找到" in result["error"]
+
+
+# ========== query_admission_scores 测试 ==========
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_query_admission_scores_success():
+    ctx, session = _make_session_ctx()
+    mock_scores = [
+        {"year": 2025, "min_score": 688, "avg_rank": 190, "batch": "本科一批"},
+        {"year": 2024, "min_score": 690, "avg_rank": 180, "batch": "本科一批"},
+    ]
+    with patch.object(_tools.pg_manager, "get_async_session_context", return_value=ctx), \
+         patch.object(_tools.zhiyuan_repository, "query_admission_scores", new=AsyncMock(return_value=mock_scores)):
+        result = await _tools.query_admission_scores(
+            university_name="清华大学", province="河南", subject_type="理科",
+        )
+    assert result["success"] is True
+    assert len(result["data"]) == 2
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_query_admission_scores_missing_params():
+    result = await _tools.query_admission_scores("", "河南", "理科")
+    assert result["success"] is False
+    assert "不能为空" in result["error"]
+
+
+# ========== estimate_rank 测试 ==========
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_estimate_rank_success():
+    ctx, session = _make_session_ctx()
+    mock_rank = {"rank": 5000, "same_score_count": 80}
+    with patch.object(_tools.pg_manager, "get_async_session_context", return_value=ctx), \
+         patch.object(_tools.zhiyuan_repository, "get_score_rank", new=AsyncMock(return_value=mock_rank)):
+        result = await _tools.estimate_rank(score=620, province="河南", subject_type="理科")
+    assert result["success"] is True
+    assert result["data"]["rank"] == 5000
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_estimate_rank_not_found():
+    ctx, session = _make_session_ctx()
+    with patch.object(_tools.pg_manager, "get_async_session_context", return_value=ctx), \
+         patch.object(_tools.zhiyuan_repository, "get_score_rank", new=AsyncMock(return_value=None)):
+        result = await _tools.estimate_rank(score=620, province="河南", subject_type="理科")
+    assert result["success"] is False
+    assert "未能" in result["error"]
+
+
+# ========== generate_plan 测试 ==========
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_generate_plan_success():
+    ctx, session = _make_session_ctx()
+    mock_plan = {
+        "rush": [{"university_name": "武大", "rank_ratio": 1.02, "probability": 0.55}],
+        "stable": [],
+        "safe": [{"university_name": "郑大", "rank_ratio": 0.65, "probability": 0.95}],
+        "summary": {"total": 2, "rush_count": 1, "stable_count": 0, "safe_count": 1},
+    }
+    with patch.object(_tools.pg_manager, "get_async_session_context", return_value=ctx), \
+         patch.object(_tools.zhiyuan_repository, "generate_plan", new=AsyncMock(return_value=mock_plan)):
+        result = await _tools.generate_plan(
+            score=620, rank=5000, province="河南", subject_type="理科",
+        )
+    assert result["success"] is True
+    assert "summary_text" in result["data"]
+    assert "冲" in result["data"]["summary_text"]
+
+
+# ========== analyze_admission_probability 测试 ==========
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_analyze_admission_probability_success():
+    """验证录取概率分析工具能正确使用 avg_rank 数据（Issue 2 修复验证）。"""
+    ctx, session = _make_session_ctx()
+    mock_scores = [
+        {"year": 2025, "min_score": 688, "avg_rank": 190, "batch": "本科一批"},
+        {"year": 2024, "min_score": 690, "avg_rank": 180, "batch": "本科一批"},
+        {"year": 2023, "min_score": 685, "avg_rank": 200, "batch": "本科一批"},
+    ]
+    with patch.object(_tools.pg_manager, "get_async_session_context", return_value=ctx), \
+         patch.object(_tools.zhiyuan_repository, "query_admission_scores", new=AsyncMock(return_value=mock_scores)):
+        result = await _tools.analyze_admission_probability(
+            user_rank=5000, university_name="清华大学", province="河南", subject_type="理科",
+        )
+    # 修复前：avg_rank 全为 0 → ranks 列表为空 → 返回 "缺少位次数据"
+    # 修复后：avg_rank > 0 → 正常计算概率
+    assert result["success"] is True
+    assert "probability" in result["data"]
+    assert 0 <= result["data"]["probability"] <= 1.0
+    assert result["data"]["avg_rank"] > 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_analyze_admission_probability_no_data():
+    ctx, session = _make_session_ctx()
+    with patch.object(_tools.pg_manager, "get_async_session_context", return_value=ctx), \
+         patch.object(_tools.zhiyuan_repository, "query_admission_scores", new=AsyncMock(return_value=[])):
+        result = await _tools.analyze_admission_probability(
+            user_rank=5000, university_name="清华大学", province="河南", subject_type="理科",
+        )
+    assert result["success"] is False
+    assert "未找到" in result["error"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_analyze_admission_probability_invalid_rank():
+    result = await _tools.analyze_admission_probability(
+        user_rank=0, university_name="清华大学", province="河南", subject_type="理科",
     )
-    assert "整数" in result
-    assert "异常" not in result  # 不应走到 _with_repo 的异常兜底
+    assert result["success"] is False
+    assert "正数" in result["error"]
+
+
+# ========== query_knowledge_graph 测试 ==========
 
 
 @pytest.mark.unit
-def test_generate_plan_rejects_nonpositive_rank():
-    """profile 中 rank<=0 应被拒绝。"""
-    import asyncio
-    import json as _json
+@pytest.mark.asyncio
+async def test_query_knowledge_graph_empty_entity():
+    result = await _tools.query_knowledge_graph("")
+    assert result["success"] is False
+    assert "不能为空" in result["error"]
 
-    result = asyncio.run(
-        _tools.generate_application_plan(_json.dumps({"rank": -3, "province": "河南"}))
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_query_knowledge_graph_success():
+    ctx, session = _make_session_ctx()
+    mock_relations = [
+        {"start": "清华大学", "end": "计算机科学与技术", "relation": "has_major"},
+    ]
+    with patch.object(_tools.pg_manager, "get_async_session_context", return_value=ctx), \
+         patch.object(_tools.zhiyuan_repository, "query_graph", new=AsyncMock(return_value=mock_relations)):
+        result = await _tools.query_knowledge_graph("清华大学")
+    assert result["success"] is True
+    assert result["data"]["count"] == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_query_knowledge_graph_no_results():
+    ctx, session = _make_session_ctx()
+    with patch.object(_tools.pg_manager, "get_async_session_context", return_value=ctx), \
+         patch.object(_tools.zhiyuan_repository, "query_graph", new=AsyncMock(return_value=[])):
+        result = await _tools.query_knowledge_graph("不存在的实体")
+    assert result["success"] is False
+    assert "未找到" in result["error"]
+
+
+# ========== search_policy 测试 ==========
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_search_policy_success():
+    ctx, session = _make_session_ctx()
+    mock_result = {"results": [{"title": "平行志愿", "content": "..."}], "total": 1}
+    with patch.object(_tools.pg_manager, "get_async_session_context", return_value=ctx), \
+         patch.object(_tools.zhiyuan_repository, "search_policy", new=AsyncMock(return_value=mock_result)):
+        result = await _tools.search_policy("什么是平行志愿")
+    assert result["success"] is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_search_policy_short_question():
+    result = await _tools.search_policy("a")
+    assert result["success"] is False
+    assert "2 个字符" in result["error"]
+
+
+# ========== get_system_status 测试 ==========
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_system_status_success():
+    ctx, session = _make_session_ctx()
+    mock_health = {"status": "ok", "tables": {}}
+    mock_stats = {"university_count": 100}
+    with patch.object(_tools.pg_manager, "get_async_session_context", return_value=ctx), \
+         patch.object(_tools.zhiyuan_repository, "get_health", new=AsyncMock(return_value=mock_health)), \
+         patch.object(_tools.zhiyuan_repository, "get_statistics", new=AsyncMock(return_value=mock_stats)):
+        result = await _tools.get_system_status()
+    assert result["success"] is True
+    assert result["data"]["health"]["status"] == "ok"
+    assert result["data"]["statistics"]["university_count"] == 100
+
+
+# ========== compare_universities 测试 ==========
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_compare_universities_too_many():
+    result = await _tools.compare_universities(
+        ["校A", "校B", "校C", "校D", "校E", "校F"], "河南", "理科",
     )
-    assert "正整数" in result
+    assert result["success"] is False
+    assert "5" in result["error"]
 
 
 @pytest.mark.unit
-def test_uni_cache_prune_expired_and_capacity():
-    """缓存维护：过期项被清理；超容量时淘汰最旧的一批。"""
-    cache = _tools._uni_cache
-    cache.clear()
-    now = 1_000_000.0
-    ttl = _tools._CACHE_TTL
-    max_size = _tools._CACHE_MAX_SIZE
+@pytest.mark.asyncio
+async def test_compare_universities_empty_list():
+    result = await _tools.compare_universities([], "河南", "理科")
+    assert result["success"] is False
+    assert "至少" in result["error"]
 
-    # 1) 过期清理：一条过期 + 一条新鲜
-    cache["过期校"] = ({"id": 1}, now - ttl - 1)
-    cache["新鲜校"] = ({"id": 2}, now - 1)
-    _tools._prune_uni_cache(now)
-    assert "过期校" not in cache
-    assert "新鲜校" in cache
 
-    # 2) 容量淘汰：填满至上限（全部未过期），prune 后应淘汰最旧 20%
-    cache.clear()
-    for i in range(max_size):
-        cache[f"u{i}"] = ({"id": i}, now - (max_size - i) * 0.001)  # u0 最旧
-    _tools._prune_uni_cache(now)
-    assert len(cache) <= max_size - max_size // 5
-    assert "u0" not in cache  # 最旧的被淘汰
-    assert f"u{max_size - 1}" in cache  # 最新的保留
-    cache.clear()
+# ========== recommend_majors 测试 ==========
 
 
 @pytest.mark.unit
-def test_resolve_university_uses_cache():
-    """同名院校在 TTL 内第二次解析应命中缓存，不再触发 repo 查询。"""
-    import asyncio
+@pytest.mark.asyncio
+async def test_recommend_majors_success():
+    ctx, session = _make_session_ctx()
+    mock_rank = {"rank": 5000, "same_score_count": 80}
+    mock_plan = {
+        "rush": [{"university_name": "武大", "majors": [{"major_name": "法学", "plan_count": 5}]}],
+        "stable": [],
+        "safe": [],
+        "summary": {"total": 1, "rush_count": 1, "stable_count": 0, "safe_count": 0},
+    }
+    with patch.object(_tools.pg_manager, "get_async_session_context", return_value=ctx), \
+         patch.object(_tools.zhiyuan_repository, "get_score_rank", new=AsyncMock(return_value=mock_rank)), \
+         patch.object(_tools.zhiyuan_repository, "generate_plan", new=AsyncMock(return_value=mock_plan)):
+        result = await _tools.recommend_majors(
+            score=620, province="河南", subject_type="理科",
+        )
+    assert result["success"] is True
+    assert result["data"]["total"] >= 1
 
-    _tools._uni_cache.clear()
-    calls = {"n": 0}
 
-    class FakeRepo:
-        async def get_university_by_name(self, name):
-            calls["n"] += 1
-            return {"id": 42, "name": name}
-
-    async def run():
-        repo = FakeRepo()
-        r1 = await _tools._resolve_university(repo, "郑州大学")
-        r2 = await _tools._resolve_university(repo, "郑州大学")
-        return r1, r2
-
-    r1, r2 = asyncio.run(run())
-    assert r1 == r2 == {"id": 42, "name": "郑州大学"}
-    assert calls["n"] == 1  # 第二次命中缓存
-    _tools._uni_cache.clear()
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_recommend_majors_no_rank():
+    ctx, session = _make_session_ctx()
+    with patch.object(_tools.pg_manager, "get_async_session_context", return_value=ctx), \
+         patch.object(_tools.zhiyuan_repository, "get_score_rank", new=AsyncMock(return_value=None)):
+        result = await _tools.recommend_majors(
+            score=620, province="河南", subject_type="理科",
+        )
+    assert result["success"] is False
+    assert "位次" in result["error"]

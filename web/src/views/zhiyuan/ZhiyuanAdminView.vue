@@ -1422,6 +1422,11 @@ async function handleImport() {
   formData.append('file', importState.file)
   importState.importing = true
   try {
+    // 文件导入端点尚未实现，引导用户使用批量 JSON 导入
+    message.warning('文件导入功能尚未上线，请使用批量导入（JSON 格式）')
+    importState.importing = false
+    return
+    // 以下代码在文件导入端点实现后启用
     let res
     if (importState.type === 'score') {
       res = await zhiyuanApi.adminImportScoresFile(formData)
@@ -1462,7 +1467,7 @@ function onTabChange(key) {
 async function loadDashStats() {
   try {
     const res = await zhiyuanApi.getPublicStats()
-    dashStats.value = res?.data || null
+    dashStats.value = res || null
   } catch (e) {
     console.error('加载统计数据失败:', e?.message || e)
   }
@@ -1471,7 +1476,7 @@ async function loadDashStats() {
 async function loadHealthData() {
   try {
     const res = await zhiyuanApi.getDataHealth()
-    healthData.value = res?.data || null
+    healthData.value = res || null
   } catch (e) {
     console.error('加载健康度失败:', e?.message || e)
   }

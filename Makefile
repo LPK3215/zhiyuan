@@ -1,5 +1,5 @@
 
-.PHONY: up up-lite down logs lint format seed reset
+.PHONY: up up-lite down logs lint format seed reset seed-zhiyuan
 
 PYTEST_ARGS ?=
 BACKEND_PYTHON ?= $(shell cat backend/.python-version)
@@ -39,12 +39,27 @@ logs:
 	@echo "Commit ID: $$(git rev-parse HEAD)"
 	@echo "System: $$(uname -a)"
 
-seed:
+seed: seed-users seed-zhiyuan
+
+seed-users:
 	docker compose exec api uv run python scripts/seed_initial_users.py
+
+seed-zhiyuan:
+	@echo "Importing zhiyuan seed data..."
+	@for f in data/seed_henan_universities.sql; do \
+		if [ -f "$$f" ]; then \
+		docker compose exec -T postgres psql -U $$(grep POSTGRES_USER .env | cut -d= -f2) -d $$(grep POSTGRES_DB .env | cut -d= -f2 || echo yuxi) < "$$f"; \
+		fi \
+	done
+	@echo "Zhiyuan seed data imported."
 
 ######################
 # LINTING AND FORMATTING
 ######################
+
+lint:
+	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv run ruff check package
+	cd web && pnpm run lint
 
 format:
 	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv run ruff format package

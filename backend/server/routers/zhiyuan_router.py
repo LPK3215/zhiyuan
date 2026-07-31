@@ -14,16 +14,15 @@
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.utils.auth_middleware import get_db as get_db_session
+from server.utils.auth_middleware import get_db as get_db_session, get_required_user
 from yuxi.repositories.zhiyuan_repository import (
     DatabaseError,
     DataNotFoundError,
@@ -34,7 +33,7 @@ from yuxi.repositories.zhiyuan_repository import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/zhiyuan", tags=["智愿"])
+router = APIRouter(prefix="/zhiyuan", tags=["智愿"], dependencies=[Depends(get_required_user)])
 zhiyuan = router  # 对外导出别名，保持 server.routers.__init__ 的 `from ... import zhiyuan` 兼容
 
 # ---------------------------------------------------------------------------
@@ -50,7 +49,7 @@ DEFAULT_PAGE_LIMIT: int = 50
 MAX_PAGE_LIMIT: int = 200
 
 # 志愿分档中英文映射（与仓库层保持一致）
-PLAN_CATEGORIES: Dict[str, str] = {"rush": "冲", "stable": "稳", "safe": "保"}
+PLAN_CATEGORIES: dict[str, str] = {"rush": "冲", "stable": "稳", "safe": "保"}
 
 # ---------------------------------------------------------------------------
 # 共享参数校验（避免 5 个 Request Model 中重复定义）
@@ -122,14 +121,14 @@ class PolicySearchRequest(BaseModel):
 
 class GraphQueryRequest(BaseModel):
     """图谱查询请求。"""
-    start_entity: str = Field(..., min_length=1, description="起始实体")
+    start_entity: str = Field(..., min_length=1, max_length=100, description="起始实体")
     relation_type: str = Field(default="", description="关系类型")
     depth: int = Field(default=2, ge=1, le=4, description="遍历深度")
 
 
 class CompareRequest(BaseModel):
     """院校对比请求。"""
-    university_names: List[str] = Field(
+    university_names: list[str] = Field(
         ..., min_length=1, max_length=5, description="院校名称列表"
     )
     province: str = Field(..., min_length=1, description="省份")
@@ -158,6 +157,27 @@ class ScoreQueryRequest(BaseModel):
 
     validate_province = field_validator("province")(_validate_province)
     validate_subject_type = field_validator("subject_type")(_validate_subject_type)
+
+
+class RecommendRequest(BaseModel):
+    """专业推荐请求。"""
+    score: int = Field(..., ge=SCORE_MIN, le=SCORE_MAX, description="高考分数")
+    province: str = Field(..., min_length=1, description="省份")
+    subject_type: str = Field(..., min_length=1, description="科类")
+    interests: str = Field(default="", description="兴趣方向（如'计算机'、'医学'）")
+
+    validate_province = field_validator("province")(_validate_province)
+    validate_subject_type = field_validator("subject_type")(_validate_subject_type)
+
+
+class CompareMajorsRequest(BaseModel):
+    """专业对比请求。"""
+    major_names: list[str] = Field(
+        ..., min_length=1, max_length=10, description="专业名称列表"
+    )
+    university_names: list[str] = Field(
+        default=[], max_length=10, description="院校名称列表（可选，不传则查所有院校）"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +231,7 @@ async def list_universities(
     limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """分页查询院校列表，支持多条件筛选。"""
     return await zhiyuan_repository.list_universities(
         session,
@@ -229,18 +249,12 @@ async def list_universities(
 async def get_university_detail(
     university_name: str,
     session: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
-    """获取指定院校的详细信息（含录取分数和招生计划）。"""
-    try:
-        return await zhiyuan_repository.query_university_admission(
-            session,
-            university_name=university_name,
-        )
-    except DataNotFoundError:
-        detail = await zhiyuan_repository.get_university_detail(session, university_name)
-        if detail is None:
-            raise
-        return {"university": detail, "scores": [], "plans": []}
+) -> dict[str, Any]:
+    """获取指定院校的详细信息（含专业列表）。录取分数由前端单独调 /scores 获取。"""
+    detail = await zhiyuan_repository.get_university_detail(session, university_name)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"未找到院校: {university_name}")
+    return detail
 
 
 @router.post("/universities/compare", summary="院校对比")
@@ -248,9 +262,9 @@ async def get_university_detail(
 async def compare_universities(
     req: CompareRequest,
     session: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """对比多所院校的录取数据。"""
-    async def _fetch_one(name: str) -> Optional[Dict[str, Any]]:
+    async def _fetch_one(name: str) -> dict[str, Any] | None:
         detail = await zhiyuan_repository.get_university_detail(session, name)
         if detail:
             scores = await zhiyuan_repository.query_admission_scores(
@@ -262,14 +276,12 @@ async def compare_universities(
             detail["admission_scores"] = scores
         return detail
 
-    results = await asyncio.gather(
-        *[_fetch_one(name) for name in req.university_names],
-        return_exceptions=True,
-    )
-    comparisons = [
-        r for r in results
-        if r is not None and not isinstance(r, BaseException)
-    ]
+    # 串行查询避免 AsyncSession 并发错误（同一 session 不支持 asyncio.gather）
+    comparisons = []
+    for name in req.university_names:
+        result = await _fetch_one(name)
+        if result is not None:
+            comparisons.append(result)
     return {"comparisons": comparisons, "count": len(comparisons)}
 
 
@@ -283,7 +295,7 @@ async def compare_universities(
 async def query_admission_scores(
     req: ScoreQueryRequest,
     session: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """查询指定院校的历年录取分数和位次。"""
     scores = await zhiyuan_repository.query_admission_scores(
         session,
@@ -296,10 +308,11 @@ async def query_admission_scores(
 
 
 @router.post("/rank", summary="分数转位次")
+@_route_handler("get_score_rank")
 async def get_score_rank(
     req: ScoreRankRequest,
     session: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """根据分数估算省位次。"""
     result = await zhiyuan_repository.get_score_rank(
         session,
@@ -319,20 +332,12 @@ async def get_score_rank(
     }
 
 
-@router.post("/score-to-rank", summary="分数转位次(别名)")
-async def score_to_rank_alias(
-    req: ScoreRankRequest,
-    session: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
-    return await get_score_rank(req, session)
-
-
 @router.post("/admission", summary="院校录取详情")
 @_route_handler("query_university_admission")
 async def query_university_admission(
     req: AdmissionQueryRequest,
     session: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """查询指定院校的完整录取详情（含分数和计划）。"""
     return await zhiyuan_repository.query_university_admission(
         session,
@@ -352,7 +357,7 @@ async def query_university_admission(
 async def generate_plan(
     req: PlanGenerateRequest,
     session: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """生成冲稳保三档志愿方案。"""
     return await zhiyuan_repository.generate_plan(
         session,
@@ -374,7 +379,7 @@ async def generate_plan(
 async def query_graph(
     req: GraphQueryRequest,
     session: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """从指定实体出发查询知识图谱关系。"""
     relations = await zhiyuan_repository.query_graph(
         session,
@@ -395,7 +400,7 @@ async def query_graph(
 async def search_policy(
     req: PolicySearchRequest,
     session: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """搜索高考政策相关信息。"""
     return await zhiyuan_repository.search_policy(
         session,
@@ -405,7 +410,7 @@ async def search_policy(
 
 
 @router.get("/policy/suggestions", summary="政策建议问题")
-async def get_policy_suggestions() -> Dict[str, Any]:
+async def get_policy_suggestions() -> dict[str, Any]:
     """获取推荐的常见问题列表（静态数据，不查库）。"""
     suggestions = [
         "什么是平行志愿？",
@@ -430,7 +435,7 @@ async def get_policy_suggestions() -> Dict[str, Any]:
 @router.get("/health", summary="系统健康检查")
 async def health_check(
     session: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """检查数据库连接和各表数据量。数据库不可用时返回 503。"""
     try:
         return await zhiyuan_repository.get_health(session)
@@ -443,6 +448,83 @@ async def health_check(
 @_route_handler("get_statistics")
 async def get_statistics(
     session: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """获取系统数据统计概览。"""
     return await zhiyuan_repository.get_statistics(session)
+
+
+# ---------------------------------------------------------------------------
+# 专业推荐 API
+# ---------------------------------------------------------------------------
+
+
+@router.post("/recommend", summary="推荐专业")
+@_route_handler("recommend_majors")
+async def recommend_majors(
+    req: RecommendRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """根据分数和兴趣推荐适合的专业。"""
+    return await zhiyuan_repository.recommend_majors(
+        session,
+        score=req.score,
+        province=req.province,
+        subject_type=req.subject_type,
+        interests=req.interests,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 省份规则 API
+# ---------------------------------------------------------------------------
+
+
+@router.get("/rules/{province}", summary="省份填报规则")
+@_route_handler("get_province_rule")
+async def get_province_rule(
+    province: str,
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """获取指定省份的最新填报规则。"""
+    return await zhiyuan_repository.get_province_rule(session, province)
+
+
+# ---------------------------------------------------------------------------
+# 专业对比 API
+# ---------------------------------------------------------------------------
+
+
+@router.post("/majors/compare", summary="专业对比")
+@_route_handler("compare_majors")
+async def compare_majors(
+    req: CompareMajorsRequest,
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """对比多所院校的同一专业（或多个专业）。"""
+    return await zhiyuan_repository.compare_majors(
+        session,
+        major_names=req.major_names,
+        university_names=req.university_names or None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 选科检查 API
+# ---------------------------------------------------------------------------
+
+
+@router.get("/subject-check", summary="选科检查")
+@_route_handler("check_subject")
+async def check_subject(
+    subject_combination: str = Query(..., min_length=1, description="选科组合（如'物理+化学+生物'）"),
+    university_name: str = Query(default="", description="院校名称（可选）"),
+    major_name: str = Query(default="", description="专业名称（可选模糊匹配）"),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """检查选科组合是否满足院校/专业的选科要求。"""
+    return await zhiyuan_repository.check_subject(
+        session,
+        subject_combination=subject_combination,
+        university_name=university_name,
+        major_name=major_name,
+    )

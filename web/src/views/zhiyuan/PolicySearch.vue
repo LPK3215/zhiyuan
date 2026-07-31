@@ -102,7 +102,7 @@ let _searchSeq = 0 // 请求序号，防竞态
 async function loadSuggestions() {
   try {
     const res = await zhiyuanApi.getPolicySuggestions()
-    suggestions.value = res?.data || []
+    suggestions.value = res?.suggestions || []
   } catch (e) {
     // 静默失败，常见问题不是核心功能
     suggestions.value = []
@@ -123,7 +123,7 @@ async function handleSearch() {
   try {
     const res = await zhiyuanApi.searchPolicy({ question: q, top_k: 5 })
     if (seq !== _searchSeq) return // 已有更新的请求，丢弃本次结果
-    results.value = res?.data || null
+    results.value = res || null
     if (results.value && results.value.total === 0) {
       message.info('未检索到相关内容，请尝试换个问法')
     }

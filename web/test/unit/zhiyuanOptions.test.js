@@ -18,7 +18,7 @@ test('PROVINCES 为单一来源且覆盖两页面历史并集', () => {
 })
 
 test('SUBJECT_TYPES 与后端 subject_type 取值对齐', () => {
-  for (const s of ['理科', '文科', '物理类', '历史类', '综合改革']) {
+  for (const s of ['理科', '文科', '物理类', '历史类', '综合']) {
     assert.ok(SUBJECT_TYPES.includes(s))
   }
   assert.equal(SUBJECT_TYPES.length, 5)

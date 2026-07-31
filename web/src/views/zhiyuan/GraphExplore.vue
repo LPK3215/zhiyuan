@@ -188,14 +188,10 @@ function buildGraphData(relationsList) {
  */
 function inferNodeTypeFromRelation(name, relation, position) {
   const relationTypeMap = {
-    '开设': { start: 'University', target: 'Major' },
     'has_major': { start: 'University', target: 'Major' },
-    '属于': { start: 'Major', target: 'Discipline' },
-    'belongs_to': { start: 'Major', target: 'Discipline' },
-    '对应职业': { start: 'Major', target: 'Career' },
-    'employed_by': { start: 'Major', target: 'Career' },
-    '前置学科': { start: 'Major', target: 'Subject' },
-    'requires': { start: 'Major', target: 'Subject' },
+    'belongs_to': { start: 'Major', target: 'University' },
+    'same_level': { start: 'University', target: 'University' },
+    'same_province': { start: 'University', target: 'University' },
   }
 
   const typeMap = relationTypeMap[relation]

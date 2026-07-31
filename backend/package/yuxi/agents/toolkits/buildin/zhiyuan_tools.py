@@ -15,119 +15,22 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
+from yuxi.agents.toolkits.registry import tool
 from yuxi.storage.postgres.manager import pg_manager  # 数据库会话管理器
 from yuxi.repositories.zhiyuan_repository import (
     DatabaseError,
     DataNotFoundError,
     InvalidParameterError,
     RepositoryError,
-    ZhiyuanRepository,
     estimate_admission_probability,
     zhiyuan_repository,
 )
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# 工具注册表
-# ---------------------------------------------------------------------------
-
-# 工具函数名 -> (函数, 描述, 参数schema)
-_tool_registry: Dict[str, tuple[Callable, str, Dict[str, Any]]] = {}
-
-
-def _register_tool(
-    func: Callable,
-) -> Callable:
-    """装饰器：将函数注册为 AI 工具。"""
-    name = func.__name__
-    description = func.__doc__ or ""
-    # 从函数签名和 docstring 提取参数 schema（简化版）
-    params_schema = getattr(func, "_tool_schema", _build_schema_from_func(func))
-    _tool_registry[name] = (func, description, params_schema)
-    return func
-
-
-def _build_schema_from_func(func: Callable) -> Dict[str, Any]:
-    """从函数元信息构建参数 schema。"""
-    properties: Dict[str, Any] = {}
-    required: List[str] = []
-
-    annotations = getattr(func, "__annotations__", {})
-    defaults = getattr(func, "__defaults__", ()) or ()
-    kwdefaults = getattr(func, "__kwdefaults__", {}) or {}
-
-    # 从函数签名提取参数名（排除 self）
-    import inspect
-    try:
-        sig = inspect.signature(func)
-        for pname, param in sig.parameters.items():
-            if pname in ("self", "session"):
-                continue
-            prop: Dict[str, Any] = {}
-            if param.annotation is not inspect.Parameter.empty:
-                ann = param.annotation
-                if ann is str:
-                    prop["type"] = "string"
-                elif ann is int:
-                    prop["type"] = "integer"
-                elif ann is float:
-                    prop["type"] = "number"
-                elif ann is bool:
-                    prop["type"] = "boolean"
-                else:
-                    prop["type"] = "string"
-            else:
-                prop["type"] = "string"
-
-            if param.default is inspect.Parameter.empty:
-                required.append(pname)
-            else:
-                prop["default"] = param.default
-
-            # 从 docstring 提取参数描述
-            desc = _extract_param_desc(func.__doc__ or "", pname)
-            if desc:
-                prop["description"] = desc
-
-            properties[pname] = prop
-    except Exception:
-        logger.warning(f"_build_schema_from_func 无法提取 {func.__name__} 的签名，将返回空 schema")
-        pass
-
-    return {
-        "type": "object",
-        "properties": properties,
-        "required": required,
-    }
-
-
-def _extract_param_desc(docstring: str, param_name: str) -> str:
-    """从 docstring 的 Args 段提取参数描述。"""
-    if not docstring:
-        return ""
-    in_args = False
-    for line in docstring.split("\n"):
-        stripped = line.strip()
-        # 跟踪 Args 段开始
-        if stripped.lower().startswith("args:"):
-            in_args = True
-            continue
-        # 遇到其他段标题则退出
-        if in_args and (stripped.lower().startswith(("returns:", "raises:", "note:", "example:"))):
-            in_args = False
-            continue
-        if in_args and stripped.startswith(f"{param_name}:"):
-            parts = stripped.split(":", 1)
-            if len(parts) == 2:
-                return parts[1].strip()
-    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -135,12 +38,12 @@ def _extract_param_desc(docstring: str, param_name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _success(data: Any) -> Dict[str, Any]:
+def _success(data: Any) -> dict[str, Any]:
     """构造成功响应。"""
     return {"success": True, "data": data, "error": None}
 
 
-def _error(msg: str) -> Dict[str, Any]:
+def _error(msg: str) -> dict[str, Any]:
     """构造错误响应。"""
     return {"success": False, "data": None, "error": msg}
 
@@ -148,7 +51,7 @@ def _error(msg: str) -> Dict[str, Any]:
 # ---- 院校查询工具 -----------------------------------------------------------
 
 
-@_register_tool
+@tool(category="zhiyuan", tags=["志愿填报"], display_name="搜索院校")
 async def search_universities(
     keyword: str = "",
     province: str = "",
@@ -156,7 +59,7 @@ async def search_universities(
     school_type: str = "",
     limit: int = 20,
     offset: int = 0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     搜索院校列表，支持按关键词、省份、层次、类型筛选。
 
@@ -197,10 +100,10 @@ async def search_universities(
         return _error(f"院校查询失败: {e}")
 
 
-@_register_tool
+@tool(category="zhiyuan", tags=["志愿填报"], display_name="院校详情")
 async def get_university_detail(
     university_name: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     获取指定院校的详细信息，包括基本信息、开设专业列表。
 
@@ -232,13 +135,13 @@ async def get_university_detail(
 # ---- 录取分数查询工具 -------------------------------------------------------
 
 
-@_register_tool
+@tool(category="zhiyuan", tags=["志愿填报"], display_name="查历年录取分")
 async def query_admission_scores(
     university_name: str,
     province: str,
     subject_type: str,
     years: int = 3,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     查询指定院校在特定省份的历年录取分数和位次。
 
@@ -281,12 +184,12 @@ async def query_admission_scores(
 # ---- 位次估算工具 -----------------------------------------------------------
 
 
-@_register_tool
+@tool(category="zhiyuan", tags=["志愿填报"], display_name="分数转位次")
 async def estimate_rank(
     score: int,
     province: str,
     subject_type: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     根据高考分数估算省位次。
 
@@ -324,14 +227,14 @@ async def estimate_rank(
 # ---- 志愿方案生成工具 -------------------------------------------------------
 
 
-@_register_tool
+@tool(category="zhiyuan", tags=["志愿填报"], display_name="生成志愿方案")
 async def generate_plan(
     score: int,
     rank: int,
     province: str,
     subject_type: str,
     subject_combination: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     生成冲稳保三档志愿方案。
 
@@ -373,7 +276,7 @@ async def generate_plan(
         return _error(f"志愿方案生成失败: {e}")
 
 
-def _build_plan_summary(plan: Optional[Dict[str, Any]]) -> str:
+def _build_plan_summary(plan: dict[str, Any] | None) -> str:
     """为 AI 构建人类可读的方案摘要文本。"""
     if plan is None:
         return "暂无可用的志愿方案数据"
@@ -404,12 +307,12 @@ def _build_plan_summary(plan: Optional[Dict[str, Any]]) -> str:
 # ---- 院校对比工具 -----------------------------------------------------------
 
 
-@_register_tool
+@tool(category="zhiyuan", tags=["志愿填报"], display_name="院校对比")
 async def compare_universities(
-    university_names: List[str],
+    university_names: list[str],
     province: str,
     subject_type: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     对比多所院校的录取数据和专业设置。
 
@@ -428,11 +331,12 @@ async def compare_universities(
 
     try:
         async with pg_manager.get_async_session_context() as session:
-            # 并行查询所有院校（asyncio.gather 消除串行 N+1）
-            async def _fetch_one(name: str) -> Optional[Dict[str, Any]]:
+            # 串行查询（AsyncSession 不支持并发 execute）
+            comparisons: list[dict[str, Any]] = []
+            for name in university_names:
                 n = name.strip()
                 if not n:
-                    return None
+                    continue
                 try:
                     detail = await zhiyuan_repository.get_university_detail(session, n)
                     if detail:
@@ -443,19 +347,9 @@ async def compare_universities(
                             subject_type=subject_type,
                         )
                         detail["admission_scores"] = scores
-                    return detail
+                        comparisons.append(detail)
                 except (DatabaseError, DataNotFoundError):
-                    return None
-
-            results = await asyncio.gather(
-                *[_fetch_one(name) for name in university_names],
-                return_exceptions=True,
-            )
-            # 过滤异常结果
-            comparisons = [
-                r for r in results
-                if r is not None and not isinstance(r, BaseException)
-            ]
+                    continue
 
             if not comparisons:
                 return _error("未找到任何可对比的院校数据")
@@ -471,12 +365,12 @@ async def compare_universities(
 # ---- 知识图谱查询工具 -------------------------------------------------------
 
 
-@_register_tool
+@tool(category="zhiyuan", tags=["志愿填报"], display_name="知识图谱查询")
 async def query_knowledge_graph(
     entity: str,
     relation_type: str = "",
     depth: int = 2,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     查询知识图谱，探索院校、专业之间的关系。
 
@@ -513,11 +407,11 @@ async def query_knowledge_graph(
 # ---- 政策检索工具 -----------------------------------------------------------
 
 
-@_register_tool
+@tool(category="zhiyuan", tags=["志愿填报"], display_name="政策检索")
 async def search_policy(
     question: str,
     top_k: int = 5,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     搜索高考政策、院校招生政策相关信息。
 
@@ -555,13 +449,13 @@ async def search_policy(
 # ---- 录取概率分析工具 -------------------------------------------------------
 
 
-@_register_tool
+@tool(category="zhiyuan", tags=["志愿填报"], display_name="录取概率分析")
 async def analyze_admission_probability(
     user_rank: int,
     university_name: str,
     province: str,
     subject_type: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     分析用户被指定院校录取的概率。
 
@@ -638,7 +532,7 @@ async def analyze_admission_probability(
 
 
 def _analyze_rank_trend(
-    scores: List[Dict[str, Any]],
+    scores: list[dict[str, Any]],
 ) -> str:
     """
     分析历年位次趋势（上升/下降/平稳）。
@@ -677,8 +571,8 @@ def _analyze_rank_trend(
 # ---- 系统工具 ---------------------------------------------------------------
 
 
-@_register_tool
-async def get_system_status() -> Dict[str, Any]:
+@tool(category="zhiyuan", tags=["志愿填报"], display_name="系统状态")
+async def get_system_status() -> dict[str, Any]:
     """
     查询系统运行状态和数据概览。
 
@@ -687,11 +581,9 @@ async def get_system_status() -> Dict[str, Any]:
     """
     try:
         async with pg_manager.get_async_session_context() as session:
-            # 并行获取健康检查与统计数据
-            health, stats = await asyncio.gather(
-                zhiyuan_repository.get_health(session),
-                zhiyuan_repository.get_statistics(session),
-            )
+            # 串行查询（AsyncSession 不支持并发 execute）
+            health = await zhiyuan_repository.get_health(session)
+            stats = await zhiyuan_repository.get_statistics(session)
 
         return _success({
             "health": health,
@@ -706,13 +598,13 @@ async def get_system_status() -> Dict[str, Any]:
 # ---- 推荐专业工具 -----------------------------------------------------------
 
 
-@_register_tool
+@tool(category="zhiyuan", tags=["志愿填报"], display_name="推荐专业")
 async def recommend_majors(
     score: int,
     province: str,
     subject_type: str,
     interests: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     根据分数和兴趣推荐适合的专业。
 
@@ -728,23 +620,25 @@ async def recommend_majors(
     try:
         async with pg_manager.get_async_session_context() as session:
             # 先估算位次
-            rank = await zhiyuan_repository.get_score_rank(
+            rank_data = await zhiyuan_repository.get_score_rank(
                 session, score=score, province=province, subject_type=subject_type
             )
-            if rank is None:
+            if rank_data is None:
                 return _error("无法估算位次，请确认分数和省份信息")
+
+            rank_value = rank_data["rank"]
 
             # 获取该位次附近的院校方案作为参考
             plan = await zhiyuan_repository.generate_plan(
                 session,
                 score=score,
-                rank=rank,
+                rank=rank_value,
                 province=province,
                 subject_type=subject_type,
             )
 
             # 从方案中提取专业
-            all_majors: List[Dict[str, Any]] = []
+            all_majors: list[dict[str, Any]] = []
             seen_majors: set = set()
 
             for category in ("rush", "stable", "safe"):
@@ -775,7 +669,7 @@ async def recommend_majors(
             return _success({
                 "recommendations": all_majors[:20],
                 "total": len(all_majors),
-                "user_rank": rank,
+                "user_rank": rank_value,
             })
     except InvalidParameterError as e:
         return _error(str(e))
@@ -787,35 +681,4 @@ async def recommend_majors(
         return _error(f"专业推荐失败: {e}")
 
 
-# ---------------------------------------------------------------------------
-# 工具发现 API
-# ---------------------------------------------------------------------------
 
-
-def get_all_tools() -> List[Dict[str, Any]]:
-    """
-    获取所有已注册工具的 OpenAI function calling 格式定义。
-
-    Returns:
-        工具定义列表，每项包含 name / description / parameters
-    """
-    tools = []
-    for name, (func, description, params_schema) in _tool_registry.items():
-        tools.append({
-            "name": name,
-            "description": description.strip().split("\n")[0]
-            if description
-            else f"调用 {name} 工具",
-            "parameters": params_schema,
-        })
-    return tools
-
-
-def get_tool_count() -> int:
-    """返回已注册的工具数量。"""
-    return len(_tool_registry)
-
-
-def get_tool_names() -> List[str]:
-    """返回所有工具名称列表。"""
-    return list(_tool_registry.keys())
