@@ -34,7 +34,7 @@ up-lite:
 	LITE_MODE=true VITE_USE_RUNS_API=false docker compose up -d postgres redis minio api web
 
 logs:
-	@docker logs --tail=50 api-dev
+	@docker compose logs --tail=50 api
 	@echo "\n\nBranch: $$(git branch --show-current)"
 	@echo "Commit ID: $$(git rev-parse HEAD)"
 	@echo "System: $$(uname -a)"

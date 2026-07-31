@@ -163,6 +163,12 @@ services:
       - VITE_LITE_MODE=${LITE_MODE:-}
     command: nginx -g "daemon off;"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   graph:
     image: neo4j:5.26

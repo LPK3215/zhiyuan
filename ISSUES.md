@@ -2,7 +2,7 @@
 
 > **维护规则**：本文件是唯一的问题追踪源。每次发现新问题追加到对应分类；每次修复后立即更新状态（`未修复` → `已修复`）。禁止在其他地方维护重复清单。
 
-> **最后更新**：2026-07-31（第八轮全量扫描完成 — 发现 3 个新问题，全部修复）
+> **最后更新**：2026-07-31（第九轮全量扫描完成 — 发现 6 个新问题，全部修复）
 
 ---
 
@@ -11,12 +11,14 @@
 | 分类 | 未修复 | 已修复 | 合计 |
 |------|--------|--------|------|
 | P0 致命（阻断功能） | 0 | 6 | 6 |
-| P1 严重（功能错误） | 0 | 16 | 16 |
-| P2 中等（数据不一致） | 0 | 16 | 16 |
-| P3 低（代码清理/优化） | 0 | 25 | 25 |
-| **合计** | **0** | **63** | **63** |
+| P1 严重（功能错误） | 0 | 17 | 17 |
+| P2 中等（数据不一致） | 0 | 19 | 19 |
+| P3 低（代码清理/优化） | 0 | 27 | 27 |
+| **合计** | **0** | **69** | **69** |
 
 > 🎉 全部问题已修复。后续发现的新问题将追加到对应分类。
+>
+> 第九轮聚焦生产环境部署配置（Nginx/Docker），提升生产环境的性能、安全性和可观测性。
 
 ---
 
@@ -382,6 +384,42 @@
 - **描述**：`buildUniversitySearchParams` 函数不设置 `limit` 参数，后端 `list_universities` 默认 `limit=50`。对于院校数量较多的省份（如北京 60+ 所、江苏 70+ 所），不筛选省份时全国 200+ 所院校中只有前 50 所被返回。页面以网格卡片展示，无分页控件，用户无法查看被截断的院校。
 - **修复内容**：在 `buildUniversitySearchParams` 中设置 `limit: 200`，确保最多返回 200 条记录（覆盖全国院校数量）。
 
+### R9-P1-1 Nginx 生产环境缺少 gzip 压缩
+- **状态**：✅ 已修复
+- **文件**：`docker/nginx/default.conf`
+- **描述**：生产环境 Nginx 配置未启用 gzip 压缩。Vite 构建产出的 JS/CSS 包通常 500KB+（未压缩），200 条院校列表的 API JSON 响应也较大。不启用 gzip 导致所有文本响应以原始大小传输，显著增加带宽消耗和页面加载时间，尤其在移动网络环境下影响明显。
+- **修复内容**：在 `default.conf` 中添加 gzip 配置：`gzip on`、`gzip_min_length 1024`、`gzip_comp_level 5`，覆盖 `text/plain`、`text/css`、`text/javascript`、`application/javascript`、`application/json`、`application/xml`、`image/svg+xml` 等类型。
+
+### R9-P2-1 Nginx 生产环境缺少安全响应头
+- **状态**：✅ 已修复
+- **文件**：`docker/nginx/default.conf`
+- **描述**：Nginx 配置未设置任何安全响应头。缺失 `X-Frame-Options` 允许页面被嵌入 iframe（点击劫持风险）；缺失 `X-Content-Type-Options` 允许浏览器 MIME 嗅探；缺失 `Referrer-Policy` 导致 Referer 头可能泄露敏感路径信息。
+- **修复内容**：添加三个安全响应头：`X-Frame-Options: SAMEORIGIN`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`，均使用 `always` 确保错误响应也携带。
+
+### R9-P2-2 Nginx 生产环境缺少静态资源缓存策略
+- **状态**：✅ 已修复
+- **文件**：`docker/nginx/default.conf`
+- **描述**：`location /` 块服务静态文件时不设置任何 `Cache-Control` 或 `Expires` 头。Vite 构建产出的 JS/CSS/图片文件名含内容哈希（如 `index-abc123.js`），文件内容变更时哈希自动变化，因此可以安全地长期缓存。不设置缓存导致浏览器每次访问都重新下载所有静态资源，页面加载缓慢。
+- **修复内容**：新增 `location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$` 块，设置 `expires 30d` 和 `Cache-Control: public, immutable`；HTML 文件设置 `Cache-Control: no-cache` 确保用户始终获取最新版本。
+
+### R9-P2-3 前端 `base.js` 500 错误消息暴露开发环境信息
+- **状态**：✅ 已修复
+- **文件**：`web/src/apis/base.js`
+- **描述**：API 请求封装中 500 错误的处理消息为 `'服务器内部错误，请使用 docker logs api-dev 查看详细日志'`。该消息包含 Docker 容器名 `api-dev`（开发环境专用），在生产环境中容器名为 `api-prod`，消息无意义且向终端用户暴露了基础设施细节（使用 Docker 部署）。
+- **修复内容**：将错误消息改为通用的 `'服务器内部错误，请稍后重试'`。
+
+### R9-P3-1 Makefile `logs` target 硬编码容器名 `api-dev`
+- **状态**：✅ 已修复
+- **文件**：`Makefile`
+- **描述**：`logs` target 使用 `docker logs --tail=50 api-dev` 硬编码开发环境容器名。在生产环境中容器名为 `api-prod`，该命令无效。
+- **修复内容**：改为 `docker compose logs --tail=50 api`，使用 Docker Compose 服务名而非容器名，在开发和生产环境中均可正常工作。
+
+### R9-P3-2 `docker-compose.prod.yml` 的 `web` 服务缺少 healthcheck
+- **状态**：✅ 已修复
+- **文件**：`docker-compose.prod.yml`
+- **描述**：生产环境 `docker-compose.prod.yml` 中所有服务（api、postgres、redis、minio、milvus、etcd、sandbox-provisioner）均配置了 healthcheck，唯独 `web` 服务（Nginx）缺失。如果 Nginx 进程仍在运行但无法响应请求（如 worker 耗尽、配置错误），Docker 无法检测到服务异常。
+- **修复内容**：为 `web` 服务添加 healthcheck：`curl -f http://localhost/ || exit 1`，间隔 30s，超时 5s，重试 3 次。
+
 ### R8-P3-1 Makefile `format` target 未包含 `server` 目录
 - **状态**：✅ 已修复
 - **文件**：`Makefile`
@@ -520,3 +558,13 @@
 | `web/src/views/zhiyuan/PlanView.vue` | 添加 watch 监听分数/省份/科类变化时清除 rank，防止使用过期位次 |
 | `web/src/views/zhiyuan/logic.js` | `buildUniversitySearchParams` 添加 `limit: 200`，避免搜索结果被截断为 50 条 |
 | `Makefile` | `format` target 增加 `server` 目录检查 |
+
+### 第九批修复（R9 全量扫描 — 6 个问题）
+
+#### 修改文件
+| 文件 | 修改内容 |
+|------|----------|
+| `docker/nginx/default.conf` | 添加 gzip 压缩、安全响应头（X-Frame-Options/X-Content-Type-Options/Referrer-Policy）、静态资源 30 天缓存策略 |
+| `web/src/apis/base.js` | 500 错误消息改为通用文案，移除暴露 Docker 容器名的开发信息 |
+| `Makefile` | `logs` target 改用 `docker compose logs` 替代硬编码容器名 |
+| `docker-compose.prod.yml` | `web` 服务添加 healthcheck |
