@@ -179,8 +179,8 @@ const scoreTrend = computed(() => {
   const trend = Object.values(byYear).sort((a, b) => a.year - b.year)
   if (trend.length === 0) return []
   const allScores = trend.flatMap((t) => t.scores)
-  const maxScore = Math.max(...allScores, 750)
-  const minScore = Math.min(...allScores, 0)
+  const maxScore = allScores.length > 0 ? Math.max(...allScores) : 750
+  const minScore = allScores.length > 0 ? Math.min(...allScores) : 0
   const range = maxScore - minScore || 1
   return trend.map((t) => {
     const avg = t.scores.length > 0

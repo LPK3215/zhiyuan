@@ -292,6 +292,9 @@
           />
           <a-button type="primary" @click="onPlanSearch">查询</a-button>
           <a-button type="primary" @click="openPlanModal(null)">新增计划</a-button>
+          <a-button :loading="importState.importing && importState.type === 'plan'" @click="openImportDialog('plan')">
+            批量导入
+          </a-button>
         </div>
         <a-table
           :dataSource="planState.list"
@@ -329,14 +332,29 @@
       </a-tab-pane>
     </a-tabs>
 
-    <!-- 隐藏的文件上传输入（用于 Excel/CSV 导入） -->
-    <input
-      ref="importFileInput"
-      type="file"
-      accept=".xlsx,.xls,.csv"
-      style="display: none"
-      @change="onImportFileChange"
-    />
+    <!-- ========== 批量导入 Modal ========== -->
+    <a-modal
+      v-model:open="importState.visible"
+      :title="`批量导入${importTypeLabel}`"
+      width="640px"
+      :confirm-loading="importState.importing"
+      :mask-closable="false"
+      @ok="doImport"
+      @cancel="importState.visible = false"
+    >
+      <a-alert
+        :message="`请粘贴 JSON 数组格式的${importTypeLabel}数据，单次上限 1000 条`"
+        type="info"
+        show-icon
+        style="margin-bottom: 12px"
+      />
+      <a-textarea
+        v-model:value="importState.jsonText"
+        :rows="12"
+        :placeholder='`[{"university_id": 1, "name": "...", ...}]`'
+        style="font-family: monospace; font-size: 12px"
+      />
+    </a-modal>
 
     <!-- ========== 院校表单 Modal ========== -->
     <a-modal
@@ -1043,6 +1061,8 @@ async function deleteUniversity(record) {
     loadUniversities()
     // 院校删除后清除下拉选项缓存
     universityOptions.value = []
+    // 清除该院校的专业选项缓存
+    delete _majorOptionsCache[record.id]
   } catch (e) {
     message.error('删除失败：' + (e.message || '未知错误'))
   }
@@ -1398,41 +1418,69 @@ async function deletePlan(record) {
   }
 }
 
-// ========== Excel/CSV 文件导入 ==========
+// ========== JSON 批量导入 ==========
 const importState = reactive({
   visible: false,
   importing: false,
-  type: '',  // 'score' | 'major'
-  file: null,
+  type: '',  // 'score' | 'major' | 'plan'
+  jsonText: '',
 })
 
-const importFileInput = ref(null)
+const importTypeLabel = computed(() => {
+  const labels = { score: '分数', major: '专业', plan: '计划' }
+  return labels[importState.type] || ''
+})
 
 function openImportDialog(type) {
   importState.type = type
-  importState.file = null
+  importState.jsonText = ''
   importState.importing = false
-  if (importFileInput.value) {
-    importFileInput.value.value = ''
-  }
-  importFileInput.value?.click()
+  importState.visible = true
 }
 
-function onImportFileChange(e) {
-  const file = e.target.files?.[0]
-  if (!file) return
-  importState.file = file
-  handleImport()
-}
-
-async function handleImport() {
-  if (!importState.file) {
-    message.warning('请先选择文件')
+async function doImport() {
+  const text = importState.jsonText.trim()
+  if (!text) {
+    message.warning('请粘贴 JSON 数据')
     return
   }
-  // 文件导入端点尚未实现，引导用户使用批量 JSON 导入
-  message.warning('文件导入功能尚未上线，请使用批量导入（JSON 格式）')
-  importState.importing = false
+  let data
+  try {
+    data = JSON.parse(text)
+  } catch (e) {
+    message.error('JSON 格式错误：' + e.message)
+    return
+  }
+  if (!Array.isArray(data)) {
+    message.error('数据必须是 JSON 数组格式')
+    return
+  }
+  if (data.length === 0) {
+    message.warning('数据为空')
+    return
+  }
+  importState.importing = true
+  try {
+    let res
+    if (importState.type === 'major') {
+      res = await zhiyuanApi.adminBatchCreateMajors(data)
+    } else if (importState.type === 'score') {
+      res = await zhiyuanApi.adminBatchCreateScores(data)
+    } else if (importState.type === 'plan') {
+      res = await zhiyuanApi.adminBatchCreatePlans(data)
+    }
+    const count = res?.count ?? 0
+    message.success(`成功导入 ${count} 条${importTypeLabel.value}数据`)
+    importState.visible = false
+    // 刷新对应列表
+    if (importState.type === 'major') loadMajors()
+    else if (importState.type === 'score') loadScores()
+    else if (importState.type === 'plan') loadPlans()
+  } catch (e) {
+    message.error('导入失败：' + (e.message || '未知错误'))
+  } finally {
+    importState.importing = false
+  }
 }
 
 // ========== 初始化 ==========

@@ -2,7 +2,7 @@
 
 > **维护规则**：本文件是唯一的问题追踪源。每次发现新问题追加到对应分类；每次修复后立即更新状态（`未修复` → `已修复`）。禁止在其他地方维护重复清单。
 
-> **最后更新**：2026-07-31（第五轮全量扫描完成 — 发现 2 个新问题，全部修复）
+> **最后更新**：2026-07-31（第六轮全量扫描完成 — 发现 5 个新问题，全部修复）
 
 ---
 
@@ -11,10 +11,10 @@
 | 分类 | 未修复 | 已修复 | 合计 |
 |------|--------|--------|------|
 | P0 致命（阻断功能） | 0 | 6 | 6 |
-| P1 严重（功能错误） | 0 | 13 | 13 |
+| P1 严重（功能错误） | 0 | 14 | 14 |
 | P2 中等（数据不一致） | 0 | 14 | 14 |
-| P3 低（代码清理/优化） | 0 | 17 | 17 |
-| **合计** | **0** | **50** | **50** |
+| P3 低（代码清理/优化） | 0 | 21 | 21 |
+| **合计** | **0** | **55** | **55** |
 
 > 🎉 全部问题已修复。后续发现的新问题将追加到对应分类。
 
@@ -137,6 +137,12 @@
 - **文件**：`web/src/constants/zhiyuanOptions.js`
 - **描述**：前端 `PROVINCES` 仅含 10 个省份，后端 `_VALID_PROVINCES` 含 31 个；前端 `UNIVERSITY_TYPES` 仅含 5 个类型，后端 `_VALID_TYPES` 含 12 个。Admin 面板的省份/类型下拉框使用前端列表，导致管理员无法为其他 21 个省份（如天津、河北、山西等）或 7 种院校类型（如农林、语言、政法等）添加/管理数据。用户端页面同样无法筛选这些省份/类型。
 - **修复内容**：将前端 `PROVINCES` 扩展为与后端一致的 31 个省份；将 `UNIVERSITY_TYPES` 扩展为与后端一致的 12 个类型。
+
+### R6-P1-1 "批量导入"按钮打开文件选择器后显示"未上线"警告 — 后端 API 已就绪但前端无 UI 入口
+- **状态**：✅ 已修复
+- **文件**：`web/src/views/zhiyuan/ZhiyuanAdminView.vue`
+- **描述**：Admin 面板的专业/分数管理 Tab 中的"批量导入"按钮（R4-P3-4 将标签从"导入Excel"改为"批量导入"），点击后打开隐藏的 `<input type="file">` 文件选择器，用户选择文件后仅显示"文件导入功能尚未上线"警告。然而后端早已实现 JSON 批量导入端点（`/api/zhiyuan/admin/majors/batch`、`/scores/batch`、`/plans/batch`），前端 API 函数（`adminBatchCreateMajors`/`adminBatchCreateScores`/`adminBatchCreatePlans`）也已定义，但没有任何 UI 入口让用户使用这些 API。这是一个严重的功能缺陷——按钮暗示有导入功能，但实际不可用。
+- **修复内容**：移除隐藏的文件上传输入和相关的 `onImportFileChange`/`handleImport` 死代码；新增 JSON 批量导入 Modal（含 textarea 输入框），用户粘贴 JSON 数组后点击确定即调用对应批量导入 API；同时为计划管理 Tab 也添加了"批量导入"按钮（此前缺失）。
 
 ---
 
@@ -310,6 +316,30 @@
 - **描述**：趋势分析函数中 `int(change_pct * 100)` 对负数进行截断（如 -15.6% → -15%），而非四舍五入（应为 -16%）。虽然差异不大，但在 AI 对话中可能误导用户判断趋势幅度。
 - **修复内容**：将 `int(change_pct * 100)` 改为 `round(change_pct * 100)`。
 
+### R6-P3-1 `UniversityBrowse.vue` 分数趋势图 `minScore` 始终包含 0 导致柱状图高度差异不明显
+- **状态**：✅ 已修复
+- **文件**：`web/src/views/zhiyuan/UniversityBrowse.vue`
+- **描述**：分数趋势图的 `minScore` 计算使用 `Math.min(...allScores, 0)`，由于 `0` 被硬编码包含在比较中，`minScore` 始终为 0。当所有年份的分数在 600-700 范围内时，柱状图的实际可用高度范围仅为 0-750，导致不同年份的分数差异在视觉上几乎不可区分（如 650 分和 680 分的高度差仅约 4%）。
+- **修复内容**：将 `minScore` 改为 `allScores.length > 0 ? Math.min(...allScores) : 0`，仅在有分数数据时取实际最小值；`maxScore` 同理改为不硬编码 750 回退。
+
+### R6-P3-2 `importState.visible` / `importFileInput` / `onImportFileChange` / `handleImport` 全部为死代码
+- **状态**：✅ 已修复
+- **文件**：`web/src/views/zhiyuan/ZhiyuanAdminView.vue`
+- **描述**：`importState.visible` 字段声明为 `false` 但从未被设为 `true`；`importFileInput` ref 绑定的隐藏 `<input>` 元素仅用于触发文件选择器；`onImportFileChange` 和 `handleImport` 函数仅显示"未上线"警告。这些代码在 R6-P1-1 修复中被一并清理。
+- **修复内容**：随 R6-P1-1 一并修复——移除隐藏文件输入元素、`importFileInput` ref、`onImportFileChange`/`handleImport` 函数，替换为 JSON 导入 Modal 和 `doImport` 函数。
+
+### R6-P3-3 计划管理 Tab 缺少"批量导入"按钮
+- **状态**：✅ 已修复
+- **文件**：`web/src/views/zhiyuan/ZhiyuanAdminView.vue`
+- **描述**：专业管理和分数管理 Tab 都有"批量导入"按钮，但计划管理 Tab 没有。后端 `/api/zhiyuan/admin/plans/batch` 端点和前端 `adminBatchCreatePlans` API 函数均已就绪，只是 UI 入口缺失。
+- **修复内容**：在计划管理 Tab 的筛选栏中添加"批量导入"按钮，与专业/分数 Tab 保持一致。
+
+### R6-P3-4 删除院校时未清除 `_majorOptionsCache` 对应条目
+- **状态**：✅ 已修复
+- **文件**：`web/src/views/zhiyuan/ZhiyuanAdminView.vue`
+- **描述**：`_majorOptionsCache` 按院校 ID 缓存专业列表。当删除院校时，`universityOptions.value = []` 清除了院校下拉缓存，但 `_majorOptionsCache` 中被删除院校的条目未被清除。虽然由于院校已从下拉中移除，用户不会再选择该院校，但残留的缓存条目属于内存泄漏。
+- **修复内容**：在 `deleteUniversity` 成功后添加 `delete _majorOptionsCache[record.id]`。
+
 ---
 
 ## 六、已修复问题归档（Issue 1-24）
@@ -416,3 +446,11 @@
 |------|----------|
 | `web/src/views/zhiyuan/UniversityBrowse.vue` | showDetail 添加请求序号防竞态 |
 | `backend/package/yuxi/agents/toolkits/buildin/zhiyuan_tools.py` | _analyze_rank_trend 百分比改用 round() |
+
+### 第六批修复（R6 全量扫描 — 5 个问题）
+
+#### 修改文件
+| 文件 | 修改内容 |
+|------|----------|
+| `web/src/views/zhiyuan/ZhiyuanAdminView.vue` | 移除文件选择器死代码；新增 JSON 批量导入 Modal（支持专业/分数/计划三种类型）；计划 Tab 添加批量导入按钮；删除院校时清除 _majorOptionsCache |
+| `web/src/views/zhiyuan/UniversityBrowse.vue` | 分数趋势图 minScore/maxScore 不再硬编码包含 0/750，改用实际数据范围 |
