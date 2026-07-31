@@ -561,9 +561,9 @@ def _analyze_rank_trend(
     change_pct = (last_rank - first_rank) / first_rank
 
     if change_pct < -0.1:
-        return f"位次逐年上升（{abs(int(change_pct * 100))}%），录取难度降低"
+        return f"位次逐年上升（{abs(round(change_pct * 100))}%），录取难度降低"
     elif change_pct > 0.1:
-        return f"位次逐年下降（{int(change_pct * 100)}%），录取难度增加"
+        return f"位次逐年下降（{round(change_pct * 100)}%），录取难度增加"
     else:
         return "位次相对稳定，录取难度变化不大"
 

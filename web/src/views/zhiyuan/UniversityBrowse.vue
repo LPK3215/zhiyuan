@@ -150,6 +150,8 @@ const detailLoading = ref(false)
 const detailScores = ref([])
 const scoreLoading = ref(false)
 
+let _detailSeq = 0 // 请求序号，防竞态
+
 const provinces = PROVINCES
 const levels = UNIVERSITY_LEVELS
 const types = UNIVERSITY_TYPES
@@ -208,6 +210,7 @@ async function handleSearch() {
 }
 
 async function showDetail(uni) {
+  const seq = ++_detailSeq
   detailData.value = uni
   detailMajors.value = []
   detailScores.value = []
@@ -216,19 +219,23 @@ async function showDetail(uni) {
   scoreLoading.value = true
   try {
     const res = await zhiyuanApi.getUniversityDetail(uni.name)
+    if (seq !== _detailSeq) return // 已有更新的请求，丢弃本次结果
     detailMajors.value = resolveMajors(res)
   } catch (e) {
+    if (seq !== _detailSeq) return
     detailMajors.value = []
   } finally {
-    detailLoading.value = false
+    if (seq === _detailSeq) detailLoading.value = false
   }
   // 并行加载历年分数（失败不影响弹窗展示）
   zhiyuanApi.queryScores({ university_name: uni.name }).then((res) => {
+    if (seq !== _detailSeq) return
     detailScores.value = resolveData(res) || []
   }).catch(() => {
+    if (seq !== _detailSeq) return
     detailScores.value = []
   }).finally(() => {
-    scoreLoading.value = false
+    if (seq === _detailSeq) scoreLoading.value = false
   })
 }
 

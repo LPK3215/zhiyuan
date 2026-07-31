@@ -2,7 +2,7 @@
 
 > **维护规则**：本文件是唯一的问题追踪源。每次发现新问题追加到对应分类；每次修复后立即更新状态（`未修复` → `已修复`）。禁止在其他地方维护重复清单。
 
-> **最后更新**：2026-07-31（第四轮全量扫描完成 — 发现 6 个新问题，全部修复）
+> **最后更新**：2026-07-31（第五轮全量扫描完成 — 发现 2 个新问题，全部修复）
 
 ---
 
@@ -12,9 +12,9 @@
 |------|--------|--------|------|
 | P0 致命（阻断功能） | 0 | 6 | 6 |
 | P1 严重（功能错误） | 0 | 13 | 13 |
-| P2 中等（数据不一致） | 0 | 13 | 13 |
-| P3 低（代码清理/优化） | 0 | 16 | 16 |
-| **合计** | **0** | **48** | **48** |
+| P2 中等（数据不一致） | 0 | 14 | 14 |
+| P3 低（代码清理/优化） | 0 | 17 | 17 |
+| **合计** | **0** | **50** | **50** |
 
 > 🎉 全部问题已修复。后续发现的新问题将追加到对应分类。
 
@@ -210,6 +210,12 @@
 - **描述**：院校详情弹窗的"历年录取分数趋势"柱状图，标题和标签（`avgScore`）暗示展示平均分，但实际代码使用 `s.min_score` 进行聚合计算。后端 API 已返回 `avg_score` 字段，应直接使用。
 - **修复内容**：将 `if (s.min_score) byYear[y].scores.push(s.min_score)` 改为优先使用 `s.avg_score`，回退到 `s.min_score`。
 
+### R5-P2-1 `UniversityBrowse.vue` `showDetail` 函数存在竞态条件
+- **状态**：✅ 已修复
+- **文件**：`web/src/views/zhiyuan/UniversityBrowse.vue`
+- **描述**：用户快速切换院校详情时，旧院校的异步分数查询可能在新院校详情打开后才返回，导致新院校弹窗中短暂显示旧院校的分数数据。专业加载（`await`）和分数加载（fire-and-forget Promise）均存在此问题。
+- **修复内容**：添加请求序号 `_detailSeq` 防竞态，在每次 `showDetail` 调用时递增序号，异步回调中检查序号是否匹配，不匹配则丢弃结果。
+
 ---
 
 ## 五、P3 低优先级（代码清理/优化）
@@ -297,6 +303,12 @@
 - **文件**：`web/src/views/zhiyuan/UniversityBrowse.vue`
 - **描述**：Admin 面板的专业和分数管理 Tab 中有"导入Excel"按钮，但点击后仅显示"文件导入功能尚未上线"提示。按钮标签"导入Excel"暗示已有文件导入功能，具有误导性。
 - **修复内容**：将按钮标签从"导入Excel"改为"批量导入"，与实际支持的 JSON 批量导入功能对应。
+
+### R5-P3-1 `_analyze_rank_trend` 百分比使用 `int()` 截断而非 `round()` 四舍五入
+- **状态**：✅ 已修复
+- **文件**：`backend/package/yuxi/agents/toolkits/buildin/zhiyuan_tools.py`
+- **描述**：趋势分析函数中 `int(change_pct * 100)` 对负数进行截断（如 -15.6% → -15%），而非四舍五入（应为 -16%）。虽然差异不大，但在 AI 对话中可能误导用户判断趋势幅度。
+- **修复内容**：将 `int(change_pct * 100)` 改为 `round(change_pct * 100)`。
 
 ---
 
@@ -396,3 +408,11 @@
 | `web/src/views/zhiyuan/UniversityBrowse.vue` | 分数趋势图改用 avg_score；导入按钮标签改为"批量导入" |
 | `backend/server/routers/zhiyuan_admin_router.py` | admin_delete_rule 错误信息含年份；ScoreCreate 添加分数逻辑校验 |
 | `backend/package/yuxi/agents/toolkits/buildin/zhiyuan_tools.py` | search_policy top_k 上限从 10 调整为 20 |
+
+### 第五批修复（R5 全量扫描 — 2 个问题）
+
+#### 修改文件
+| 文件 | 修改内容 |
+|------|----------|
+| `web/src/views/zhiyuan/UniversityBrowse.vue` | showDetail 添加请求序号防竞态 |
+| `backend/package/yuxi/agents/toolkits/buildin/zhiyuan_tools.py` | _analyze_rank_trend 百分比改用 round() |
