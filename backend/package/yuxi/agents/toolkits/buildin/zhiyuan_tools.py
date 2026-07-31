@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any
 
 from yuxi.agents.toolkits.registry import tool
@@ -488,7 +488,7 @@ async def analyze_admission_probability(
                 )
 
             # 计算平均位次和概率
-            ranks = [s["avg_rank"] for s in scores if s.get("avg_rank")]
+            ranks = [s["min_rank"] for s in scores if s.get("min_rank")]
             if not ranks:
                 return _error(f"{university_name} 缺少位次数据，无法分析")
 
@@ -546,7 +546,7 @@ def _analyze_rank_trend(
     if len(scores) < 2:
         return "数据不足，无法判断趋势"
 
-    ranks = [(s["year"], s["avg_rank"]) for s in scores if s.get("avg_rank")]
+    ranks = [(s["year"], s["min_rank"]) for s in scores if s.get("min_rank")]
     ranks.sort(key=lambda x: x[0])  # 按年份升序
 
     if len(ranks) < 2:
@@ -588,7 +588,7 @@ async def get_system_status() -> dict[str, Any]:
         return _success({
             "health": health,
             "statistics": stats,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         })
     except Exception as e:
         logger.exception(f"get_system_status 失败: {e}")
@@ -619,60 +619,17 @@ async def recommend_majors(
     """
     try:
         async with pg_manager.get_async_session_context() as session:
-            # 先估算位次
-            rank_data = await zhiyuan_repository.get_score_rank(
-                session, score=score, province=province, subject_type=subject_type
-            )
-            if rank_data is None:
-                return _error("无法估算位次，请确认分数和省份信息")
-
-            rank_value = rank_data["rank"]
-
-            # 获取该位次附近的院校方案作为参考
-            plan = await zhiyuan_repository.generate_plan(
+            result = await zhiyuan_repository.recommend_majors(
                 session,
                 score=score,
-                rank=rank_value,
                 province=province,
                 subject_type=subject_type,
+                interests=interests,
             )
-
-            # 从方案中提取专业
-            all_majors: list[dict[str, Any]] = []
-            seen_majors: set = set()
-
-            for category in ("rush", "stable", "safe"):
-                for uni in plan.get(category, []):
-                    for major in uni.get("majors", []):
-                        mname = major.get("major_name", "")
-                        if mname and mname not in seen_majors:
-                            seen_majors.add(mname)
-                            all_majors.append({
-                                "major_name": mname,
-                                "plan_count": major.get("plan_count", 0),
-                                "university_name": uni["university_name"],
-                                "category": category,
-                            })
-
-            # 如果有兴趣方向，优先匹配
-            if interests:
-                interest_lower = interests.strip().lower()
-                matched = [
-                    m for m in all_majors
-                    if interest_lower in m["major_name"].lower()
-                ]
-                if matched:
-                    matched_ids = {id(m) for m in matched}
-                    all_majors = matched + [
-                        m for m in all_majors if id(m) not in matched_ids
-                    ]
-
-            return _success({
-                "recommendations": all_majors[:20],
-                "total": len(all_majors),
-                "user_rank": rank_value,
-            })
+            return _success(result)
     except InvalidParameterError as e:
+        return _error(str(e))
+    except DataNotFoundError as e:
         return _error(str(e))
     except DatabaseError as e:
         logger.error(f"recommend_majors 数据库错误: {e}")

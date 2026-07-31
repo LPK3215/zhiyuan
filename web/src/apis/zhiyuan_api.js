@@ -188,12 +188,4 @@ export const zhiyuanApi = {
   /** 批量导入计划（JSON 数组） */
   adminBatchCreatePlans: (data) =>
     apiAdminPost('/api/zhiyuan/admin/plans/batch', data),
-
-  /** Excel/CSV 文件导入分数 */
-  adminImportScoresFile: (formData) =>
-    apiAdminPost('/api/zhiyuan/admin/scores/import', formData),
-
-  /** Excel/CSV 文件导入专业 */
-  adminImportMajorsFile: (formData) =>
-    apiAdminPost('/api/zhiyuan/admin/majors/import', formData),
 }

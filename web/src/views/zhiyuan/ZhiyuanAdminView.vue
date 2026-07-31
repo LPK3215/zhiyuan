@@ -235,7 +235,7 @@
           :dataSource="rulePagedList"
           :columns="ruleColumns"
           :loading="ruleState.loading"
-          rowKey="province"
+          rowKey="id"
           :pagination="false"
           size="small"
           :scroll="{ x: 900 }"
@@ -1027,6 +1027,8 @@ async function submitUniversity() {
     }
     uniState.modalVisible = false
     loadUniversities()
+    // 院校变更后清除下拉选项缓存，下次打开表单时重新加载
+    universityOptions.value = []
   } catch (e) {
     message.error('保存失败：' + (e.message || '未知错误'))
   } finally {
@@ -1039,6 +1041,8 @@ async function deleteUniversity(record) {
     await zhiyuanApi.adminDeleteUniversity(record.id)
     message.success('删除成功')
     loadUniversities()
+    // 院校删除后清除下拉选项缓存
+    universityOptions.value = []
   } catch (e) {
     message.error('删除失败：' + (e.message || '未知错误'))
   }
@@ -1110,6 +1114,10 @@ async function submitMajor() {
     }
     majorState.modalVisible = false
     loadMajors()
+    // 专业变更后清除该院校的专业缓存
+    if (majorState.form.university_id) {
+      delete _majorOptionsCache[majorState.form.university_id]
+    }
   } catch (e) {
     message.error('保存失败：' + (e.message || '未知错误'))
   } finally {
@@ -1122,6 +1130,10 @@ async function deleteMajor(record) {
     await zhiyuanApi.adminDeleteMajor(record.id)
     message.success('删除成功')
     loadMajors()
+    // 专业删除后清除该院校的专业缓存
+    if (record.university_id) {
+      delete _majorOptionsCache[record.university_id]
+    }
   } catch (e) {
     message.error('删除失败：' + (e.message || '未知错误'))
   }
@@ -1418,38 +1430,9 @@ async function handleImport() {
     message.warning('请先选择文件')
     return
   }
-  const formData = new FormData()
-  formData.append('file', importState.file)
-  importState.importing = true
-  try {
-    // 文件导入端点尚未实现，引导用户使用批量 JSON 导入
-    message.warning('文件导入功能尚未上线，请使用批量导入（JSON 格式）')
-    importState.importing = false
-    return
-    // 以下代码在文件导入端点实现后启用
-    let res
-    if (importState.type === 'score') {
-      res = await zhiyuanApi.adminImportScoresFile(formData)
-    } else if (importState.type === 'major') {
-      res = await zhiyuanApi.adminImportMajorsFile(formData)
-    }
-    const count = res?.count || 0
-    message.success(`导入成功，共 ${count} 条记录`)
-    // 刷新对应列表
-    if (importState.type === 'score') {
-      loadScores()
-      // 院校选项可能也需要刷新（如果导入了新专业）
-      loadUniversityOptions()
-    } else if (importState.type === 'major') {
-      loadMajors()
-    }
-  } catch (e) {
-    const detail = e?.response?.data?.detail || e?.detail || e.message || '未知错误'
-    message.error('导入失败：' + detail)
-  } finally {
-    importState.importing = false
-    importState.file = null
-  }
+  // 文件导入端点尚未实现，引导用户使用批量 JSON 导入
+  message.warning('文件导入功能尚未上线，请使用批量导入（JSON 格式）')
+  importState.importing = false
 }
 
 // ========== 初始化 ==========

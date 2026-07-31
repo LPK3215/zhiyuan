@@ -24,7 +24,7 @@ class University(Base):
     __tablename__ = "zhiyuan_universities"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(200), nullable=False, index=True)
+    name = Column(String(200), nullable=False, unique=True, index=True)
     province = Column(String(50), nullable=False)
     city = Column(String(50), default="")
     level = Column(String(50), default="")  # 985/211/双一流/普通

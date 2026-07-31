@@ -739,10 +739,9 @@ async def admin_delete_rule(
         stmt = stmt.where(ProvinceRule.year == year)
 
     result = await session.execute(stmt)
-    await session.commit()
-    zhiyuan_repository.invalidate_cache_after_write()
-
     if result.rowcount == 0:
         raise HTTPException(status_code=404, detail=f"未找到省份规则: {province}")
 
+    await session.commit()
+    zhiyuan_repository.invalidate_cache_after_write()
     return {"ok": True, "deleted": result.rowcount}

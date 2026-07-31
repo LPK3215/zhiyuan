@@ -2,7 +2,7 @@
 
 > **维护规则**：本文件是唯一的问题追踪源。每次发现新问题追加到对应分类；每次修复后立即更新状态（`未修复` → `已修复`）。禁止在其他地方维护重复清单。
 
-> **最后更新**：2026-07-31（第二轮全量扫描完成 — 12 个新问题全部修复）
+> **最后更新**：2026-07-31（第三轮全量扫描完成 — 8 个新问题全部修复）
 
 ---
 
@@ -11,10 +11,10 @@
 | 分类 | 未修复 | 已修复 | 合计 |
 |------|--------|--------|------|
 | P0 致命（阻断功能） | 0 | 6 | 6 |
-| P1 严重（功能错误） | 0 | 10 | 10 |
-| P2 中等（数据不一致） | 0 | 9 | 9 |
-| P3 低（代码清理/优化） | 0 | 9 | 9 |
-| **合计** | **0** | **34** | **34** |
+| P1 严重（功能错误） | 0 | 12 | 12 |
+| P2 中等（数据不一致） | 0 | 12 | 12 |
+| P3 低（代码清理/优化） | 0 | 12 | 12 |
+| **合计** | **0** | **42** | **42** |
 
 > 🎉 全部问题已修复。后续发现的新问题将追加到对应分类。
 
@@ -120,6 +120,18 @@
 - **文件**：`backend/server/routers/zhiyuan_admin_router.py`
 - **修复内容**：在所有 Admin 写入端点（create/update/delete/batch/upsert）的 `commit()` 后添加 `zhiyuan_repository.invalidate_cache_after_write()` 调用，共 14 处。
 
+### R3-P1-1 规则表格 `rowKey="province"` 导致多年份时 Vue 重复键
+- **状态**：✅ 已修复
+- **文件**：`web/src/views/zhiyuan/ZhiyuanAdminView.vue`
+- **描述**：R2-P1-1 将 ProvinceRule 改为支持多年份后，同一省份可有多条规则记录。但前端规则表格仍使用 `rowKey="province"`，导致 Vue 渲染重复键警告及潜在行渲染错乱。
+- **修复内容**：将 `rowKey` 从 `"province"` 改为 `"id"`。
+
+### R3-P1-2 `admin_delete_rule` 在 commit 后才检查 rowcount 并抛 404
+- **状态**：✅ 已修复
+- **文件**：`backend/server/routers/zhiyuan_admin_router.py`
+- **描述**：删除规则的端点先执行 `commit()` + `invalidate_cache_after_write()`，然后才检查 `result.rowcount == 0` 并抛 404。虽然空删除的 commit 无害，但缓存被无谓清除，且 404 在 commit 后抛出不符合事务语义。
+- **修复内容**：将 rowcount 检查移到 commit 之前，先判断是否有行被删除，无则直接抛 404，有则 commit + 清缓存。
+
 ---
 
 ## 四、P2 中等问题（数据不一致）
@@ -168,6 +180,24 @@
 - **文件**：`backend/package/yuxi/repositories/zhiyuan_repository.py`
 - **修复内容**：在 `query_university_admission` 的计划查询 WHERE 条件中添加 `EnrollmentPlan.subject_type == subj_filter`。
 
+### R3-P2-1 `analyze_admission_probability` 工具使用 `avg_rank`（实际为 `min_rank`）计算概率
+- **状态**：✅ 已修复
+- **文件**：`backend/package/yuxi/agents/toolkits/buildin/zhiyuan_tools.py`
+- **描述**：工具从 API 响应中取 `avg_rank` 字段计算录取概率，但 `avg_rank` 实际等于 `min_rank`（R2-P1-2 已标注）。使用 `min_rank` 代替 `avg_rank` 会导致概率计算偏低（院校看起来比实际更难录取）。
+- **修复内容**：将 `s["avg_rank"]` 改为 `s["min_rank"]`，`_analyze_rank_trend` 同步修改。
+
+### R3-P2-2 前端 `_majorOptionsCache` 和 `universityOptions` 在数据变更后不刷新
+- **状态**：✅ 已修复
+- **文件**：`web/src/views/zhiyuan/ZhiyuanAdminView.vue`
+- **描述**：`_majorOptionsCache` 按院校 ID 缓存专业列表，`universityOptions` 首次加载后不再请求。当管理员新增/删除专业或院校后，下拉选项仍显示旧数据。
+- **修复内容**：在 `submitMajor`、`deleteMajor`、`submitUniversity`、`deleteUniversity` 成功后清除对应缓存，强制下次打开表单时重新加载。
+
+### R3-P2-3 `recommend_majors` 工具完全复制仓库层逻辑而非委托
+- **状态**：✅ 已修复
+- **文件**：`backend/package/yuxi/agents/toolkits/buildin/zhiyuan_tools.py`
+- **描述**：工具层 `recommend_majors` 手动实现了 get_score_rank → generate_plan → 提取专业 → 兴趣过滤的完整流程，与 `zhiyuan_repository.recommend_majors()` 完全重复。两份代码独立维护易产生不一致。
+- **修复内容**：删除工具层的重复逻辑，改为直接调用 `zhiyuan_repository.recommend_majors()`。
+
 ---
 
 ## 五、P3 低优先级（代码清理/优化）
@@ -213,6 +243,24 @@
 - **状态**：✅ 已修复
 - **文件**：`Makefile`
 - **修复内容**：在 `.PHONY` 行添加 `seed-users`。
+
+### R3-P3-1 `datetime.now()` 未使用 UTC 时区（与仓库层不一致）
+- **状态**：✅ 已修复
+- **文件**：`backend/package/yuxi/agents/toolkits/buildin/zhiyuan_tools.py`
+- **描述**：`get_system_status` 工具使用 `datetime.now().isoformat()` 返回本地时间，而仓库层统一使用 `datetime.now(UTC)`。时区不一致可能导致前端显示混乱。
+- **修复内容**：改为 `datetime.now(UTC).isoformat()`，与仓库层保持一致。
+
+### R3-P3-2 前端 `adminImportScoresFile` / `adminImportMajorsFile` 调用不存在的后端端点
+- **状态**：✅ 已修复
+- **文件**：`web/src/apis/zhiyuan_api.js`
+- **描述**：这两个 API 函数分别调用 `/api/zhiyuan/admin/scores/import` 和 `/api/zhiyuan/admin/majors/import`，但后端从未实现这些端点。`handleImport` 函数中有 `return` 提前退出所以不会被实际调用，但保留死代码影响维护。
+- **修复内容**：移除这两个死函数及其在 `handleImport` 中的引用代码。
+
+### R3-P3-3 University `name` 列缺少数据库级唯一约束
+- **状态**：✅ 已修复
+- **文件**：`backend/package/yuxi/repositories/zhiyuan_models.py`
+- **描述**：`name` 列仅有 `index=True`，唯一性校验完全依赖应用层 `_check_university_name_unique`。在并发请求下存在竞态条件，可能插入重复校名。
+- **修复内容**：添加 `unique=True` 到 `University.name` 列定义。
 
 ---
 
@@ -278,7 +326,7 @@
 | `web/test/unit/graphRelations.test.js` | 同步更新 |
 | `Makefile` | 添加 lint target、拆分 seed target |
 
-### 第二批修复（进行中）
+### 第二批修复（已提交 commit 43c4c6a）
 
 #### 修改文件
 | 文件 | 修改内容 |
@@ -291,3 +339,14 @@
 | `web/src/apis/zhiyuan_api.js` | 添加 adminBatchCreateScores |
 | `web/src/views/zhiyuan/ZhiyuanAdminView.vue` | tuition 改为文本输入 |
 | `Makefile` | .PHONY 添加 seed-users |
+
+### 第三批修复（R3 全量扫描 — 8 个问题）
+
+#### 修改文件
+| 文件 | 修改内容 |
+|------|----------|
+| `backend/server/routers/zhiyuan_admin_router.py` | admin_delete_rule 修正事务顺序（先检查 rowcount 再 commit） |
+| `backend/package/yuxi/agents/toolkits/buildin/zhiyuan_tools.py` | analyze_admission_probability 改用 min_rank；recommend_majors 委托仓库层；datetime 改用 UTC |
+| `backend/package/yuxi/repositories/zhiyuan_models.py` | University.name 添加 unique=True 约束 |
+| `web/src/views/zhiyuan/ZhiyuanAdminView.vue` | 规则表格 rowKey 改为 id；添加缓存失效逻辑；清理 handleImport 死代码 |
+| `web/src/apis/zhiyuan_api.js` | 移除 adminImportScoresFile/adminImportMajorsFile 死函数 |
