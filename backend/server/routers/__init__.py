@@ -18,7 +18,12 @@ from server.routers.system_task_router import tasks
 from server.routers.tool_router import tools
 from server.routers.user_router import user_router
 from server.routers.workspace_router import workspace
-from server.routers.zhiyuan_router import zhiyuan, admin as zhiyuan_admin
+from server.routers.zhiyuan_router import zhiyuan
+
+# admin 路由暂未实现（zhiyuan_router.py 中已移除），保留 zhiyuan_admin 为 None 避免启动崩溃。
+# 若需恢复 admin CRUD，请实现 admin = APIRouter(prefix="/zhiyuan/admin", ...) 后取消注释下行。
+# from server.routers.zhiyuan_router import admin as zhiyuan_admin
+zhiyuan_admin = None
 
 _LITE_MODE = os.environ.get("LITE_MODE", "").lower() in ("true", "1")
 
@@ -47,7 +52,8 @@ router.include_router(mention_router)  # /api/mention/* 提及文件搜索接口
 
 # 智愿·志愿填报业务接口
 router.include_router(zhiyuan)  # /api/zhiyuan/* 用户端查询与推荐
-router.include_router(zhiyuan_admin)  # /api/zhiyuan/admin/* 管理端数据CRUD
+if zhiyuan_admin is not None:
+    router.include_router(zhiyuan_admin)  # /api/zhiyuan/admin/* 管理端数据CRUD（待实现）
 
 if not _LITE_MODE:
     from server.routers.external_kb_router import external_kb

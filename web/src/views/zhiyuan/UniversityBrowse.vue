@@ -214,7 +214,7 @@ async function showDetail(uni) {
   detailLoading.value = true
   scoreLoading.value = true
   try {
-    const res = await zhiyuanApi.getUniversityDetail(uni.id)
+    const res = await zhiyuanApi.getUniversityDetail(uni.name)
     detailMajors.value = resolveMajors(res)
   } catch (e) {
     detailMajors.value = []

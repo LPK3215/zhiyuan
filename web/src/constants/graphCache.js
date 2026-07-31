@@ -36,9 +36,11 @@ export function createGraphCache(ttl = 60 * 1000) {
     /** 清空过期项（可选，用于长时间运行后回收内存）。 */
     prune() {
       const now = Date.now()
+      const expired = []
       for (const [k, v] of store) {
-        if (v.expires <= now) store.delete(k)
+        if (v.expires <= now) expired.push(k)
       }
+      for (const k of expired) store.delete(k)
     },
   }
 }

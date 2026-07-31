@@ -1,25 +1,25 @@
 import re
-from yuxi.utils import logger
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, status, UploadFile, File
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import RedirectResponse
+from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yuxi.utils import logger
 from yuxi.storage.postgres.manager import pg_manager
-from yuxi.storage.postgres.models_business import APIKey, User, Department
+from yuxi.storage.postgres.models_business import APIKey, Department, User
 from yuxi.repositories.user_repository import UserRepository
 from yuxi.repositories.department_repository import DepartmentRepository
 from server.utils.auth_middleware import (
     get_admin_user,
-    get_superadmin_user,
     get_db,
     get_required_user,
+    get_superadmin_user,
 )
 from yuxi.utils.auth_utils import AuthUtils
-from yuxi.services.user_identity_service import generate_unique_uid, validate_username, is_valid_phone_number
+from yuxi.services.user_identity_service import generate_unique_uid, is_valid_phone_number, validate_username
 from yuxi.services.operation_log_service import log_operation
 from yuxi.services.auth_service import (
     CLI_AUTH_POLL_INTERVAL_SECONDS,

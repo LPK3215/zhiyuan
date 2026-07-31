@@ -112,52 +112,46 @@
 </template>
 
 <script setup>
+/**
+ * PlanView.vue —— 志愿方案页面
+ *
+ * 核心流程：
+ * 1. 用户填写省份/科类/分数/位次 → 生成冲稳保三档方案
+ * 2. 位次自动查询：未填位次时先调用 getScoreRank 接口估算
+ * 3. 概率估算：统一使用 estimateProbability（与后端 estimate_admission_probability 对齐）
+ *
+ * 组件树：PlanView → PlanTable（内联表格，接收 data prop 渲染）
+ */
 import { ref, h, defineComponent, resolveComponent } from 'vue'
 import { message } from 'ant-design-vue'
 import { zhiyuanApi } from '@/apis/zhiyuan_api'
 import { PROVINCES, SUBJECT_TYPES } from '@/constants/zhiyuanOptions'
-import { validatePlanProfile, resolveRank, resolvePlan } from './logic'
+import {
+  validatePlanProfile,
+  resolveRank,
+  resolvePlan,
+  estimateProbability,
+  getProbabilityColor,
+  getProbabilityLabel,
+} from './logic'
 import { Printer } from 'lucide-vue-next'
 
-/**
- * 根据位次比值估算录取概率
- * ratio = 用户位次 / 院校平均位次
- * ratio < 1：用户位次高于院校平均（更容易录取）
- * ratio > 1：用户位次低于院校平均（更难录取）
- */
-function estimateProbability(ratio) {
-  if (!ratio || ratio <= 0) return null
-  if (ratio <= 0.5) return 99
-  if (ratio <= 0.7) return Math.round(99 - (ratio - 0.5) * 45)  // 99→90
-  if (ratio <= 0.9) return Math.round(90 - (ratio - 0.7) * 75)  // 90→75
-  if (ratio <= 1.0) return Math.round(75 - (ratio - 0.9) * 50)  // 75→70
-  if (ratio <= 1.2) return Math.round(70 - (ratio - 1.0) * 100) // 70→50
-  if (ratio <= 1.5) return Math.round(50 - (ratio - 1.2) * 67)  // 50→30
-  return Math.max(10, Math.round(30 - (ratio - 1.5) * 40))
-}
-
-function getProbabilityColor(prob) {
-  if (prob >= 85) return '#1890ff'   // 保底-蓝
-  if (prob >= 70) return '#3f8600'   // 稳妥-绿
-  if (prob >= 50) return '#fa8c16'   // 冲刺-橙
-  return '#cf1322'                    // 高风险-红
-}
-
-function getProbabilityLabel(prob) {
-  if (prob >= 85) return '保底'
-  if (prob >= 70) return '稳妥'
-  if (prob >= 50) return '冲刺'
-  return '高风险'
-}
+// ---------------------------------------------------------------------------
+// 常量
+// ---------------------------------------------------------------------------
 
 const provinces = PROVINCES
 const subjectTypes = SUBJECT_TYPES
 
-// 省份搜索过滤：支持拼音/汉字模糊匹配
+/** 省份搜索过滤：大小写不敏感模糊匹配 */
 const filterProvince = (input, option) => {
   const label = option?.children?.[0]?.children || option?.value || ''
   return String(label).toLowerCase().includes(input.toLowerCase())
 }
+
+// ---------------------------------------------------------------------------
+// 响应式状态
+// ---------------------------------------------------------------------------
 
 const profile = ref({
   province: undefined,
@@ -171,12 +165,16 @@ const plan = ref(null)
 const generating = ref(false)
 const activeTab = ref('rush')
 
-// 内联表格组件
+/** 请求序号，防止快速重复点击导致竞态 */
+let _genSeq = 0
+
+// ---------------------------------------------------------------------------
+// 内联表格组件 PlanTable
+// ---------------------------------------------------------------------------
+
 const PlanTable = defineComponent({
   props: {
     data: { type: Array, default: () => [] },
-    color: { type: String, default: 'var(--gray-1000)' },
-    category: { type: String, default: '' },
   },
   setup(props) {
     const ATable = resolveComponent('a-table')
@@ -191,34 +189,25 @@ const PlanTable = defineComponent({
         key: 'probability',
         width: 130,
         customRender: ({ record }) => {
-          const prob = estimateProbability(record.rank_ratio)
+          const prob = estimateProbability(record?.rank_ratio)
           if (prob === null) return h('span', { style: { color: 'var(--gray-400)' } }, '—')
           const color = getProbabilityColor(prob)
           const label = getProbabilityLabel(prob)
           return h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } }, [
-            h(
-              'span',
-              { style: { fontSize: '14px', fontWeight: 700, color } },
-              `${prob}%`
-            ),
-            h(
-              'span',
-              {
-                style: {
-                  fontSize: '11px',
-                  padding: '1px 6px',
-                  borderRadius: '4px',
-                  background: color,
-                  color: '#fff',
-                  fontWeight: 500,
-                },
+            h('span', { style: { fontSize: '14px', fontWeight: 700, color } }, `${prob}%`),
+            h('span', {
+              style: {
+                fontSize: '11px', padding: '1px 6px', borderRadius: '4px',
+                background: color, color: '#fff', fontWeight: 500,
               },
-              label
-            ),
+            }, label),
           ])
         },
       },
-      { title: '位次比', dataIndex: 'rank_ratio', key: 'ratio', width: 80, customRender: ({ value }) => value ? value.toFixed(2) : '—' },
+      {
+        title: '位次比', dataIndex: 'rank_ratio', key: 'ratio', width: 80,
+        customRender: ({ value }) => (value != null ? value.toFixed(2) : '—'),
+      },
       {
         title: '推荐专业',
         dataIndex: 'majors',
@@ -229,7 +218,7 @@ const PlanTable = defineComponent({
           return h(
             'div',
             { style: { display: 'flex', flexDirection: 'column', gap: '2px' } },
-            value.map((m) =>
+            value.slice(0, 5).map((m) =>  // 最多展示 5 个专业
               h('span', { style: { fontSize: '12px' } }, `${m.major_name}（计划${m.plan_count}人）`)
             )
           )
@@ -238,7 +227,7 @@ const PlanTable = defineComponent({
     ]
     return () =>
       h(ATable, {
-        dataSource: props.data,
+        dataSource: props.data || [],
         columns,
         pagination: false,
         size: 'small',
@@ -247,7 +236,12 @@ const PlanTable = defineComponent({
   },
 })
 
+// ---------------------------------------------------------------------------
+// 志愿方案生成（带竞态保护）
+// ---------------------------------------------------------------------------
+
 async function generatePlan() {
+  // 参数校验
   const err = validatePlanProfile(profile.value)
   if (err) {
     message.warning(err)
@@ -255,23 +249,35 @@ async function generatePlan() {
   }
 
   generating.value = true
+  plan.value = null  // 清除旧数据
+  const seq = ++_genSeq
+
   try {
-    // 如果没有位次，先查
+    // Step 1: 位次自动查询（用户未填或填写为 0 时自动查询）
     let rank = profile.value.rank
-    if (!rank) {
-      const rankRes = await zhiyuanApi.getScoreRank({
-        score: profile.value.score,
-        province: profile.value.province,
-        subject_type: profile.value.subject_type,
-      })
-      rank = resolveRank(rankRes)
-      if (!rank) {
-        message.error('未能查询到位次，请手动填写')
+    if (!rank || rank <= 0) {
+      try {
+        const rankRes = await zhiyuanApi.getScoreRank({
+          score: profile.value.score,
+          province: profile.value.province,
+          subject_type: profile.value.subject_type,
+        })
+        if (seq !== _genSeq) return  // 竞态：已有新请求
+
+        rank = resolveRank(rankRes)
+        if (!rank) {
+          message.error('未能查询到位次，请手动填写')
+          return
+        }
+        profile.value.rank = rank
+      } catch (e) {
+        if (seq !== _genSeq) return
+        message.error('位次查询失败：' + (e.message || '未知错误'))
         return
       }
-      profile.value.rank = rank
     }
 
+    // Step 2: 生成志愿方案
     const res = await zhiyuanApi.generatePlan({
       score: profile.value.score,
       rank,
@@ -279,19 +285,30 @@ async function generatePlan() {
       subject_type: profile.value.subject_type,
       subject_combination: profile.value.subject_combination || '',
     })
+    if (seq !== _genSeq) return  // 竞态保护
+
     plan.value = resolvePlan(res)
+
+    // 空方案提示
+    const total = plan.value?.summary?.total || 0
+    if (total === 0) {
+      message.warning('当前分数/位次未匹配到合适院校，请尝试调整省份或科类')
+    } else {
+      message.success(`方案生成成功，共 ${total} 所院校`)
+    }
+
     activeTab.value = 'rush'
-    message.success('方案生成成功')
   } catch (e) {
+    if (seq !== _genSeq) return
     message.error('生成失败：' + (e.message || '未知错误'))
+    plan.value = null
   } finally {
-    generating.value = false
+    if (seq === _genSeq) generating.value = false
   }
 }
 
+/** 打印/导出方案（通过浏览器打印） */
 function printPlan() {
-  // 在打印前展开所有Tab的数据
-  // 使用CSS @media print 控制打印样式
   window.print()
 }
 </script>

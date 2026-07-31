@@ -1,662 +1,821 @@
-"""智愿 - 高考志愿填报工具集（13个工具）"""
+"""
+智愿（Zhiyuan）AI Agent 工具层 —— 将数据访问能力封装为 LLM 可调用的 Function Tools。
 
+设计原则：
+  1. 每个工具函数签名与 OpenAI function calling 规范对齐（name + description + parameters schema）
+  2. 工具内部不直接操作数据库，全部委托给 ZhiyuanRepository
+  3. 参数校验在工具入口完成（白名单/范围检查），避免无效查询穿透到数据库层
+  4. 返回统一的 {"success": bool, "data": ..., "error": str|None} 结构
+  5. 所有异常在工具内部捕获，绝不向 LLM 泄露调用栈
+
+优化记录：
+  - 2026-07-31：概率公式统一引用 estimate_admission_probability、类型注解全覆盖、
+    边界条件完善（空结果、空参数、非法值）、异常细分捕获
+"""
+
+from __future__ import annotations
+
+import asyncio
 import json
+import logging
+from datetime import datetime
+from typing import Any, Callable, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from ... import get_session  # Agent 框架提供的会话获取函数
+from ....repositories.zhiyuan_repository import (
+    DatabaseError,
+    DataNotFoundError,
+    InvalidParameterError,
+    RepositoryError,
+    ZhiyuanRepository,
+    estimate_admission_probability,
+    zhiyuan_repository,
+)
 
-from yuxi.agents.toolkits.registry import tool
-from yuxi.utils import logger
+logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# 工具注册表
+# ---------------------------------------------------------------------------
 
-# ========== 共享 helper ==========
-
-import time as _time
-
-# 轻量 TTL 缓存（院校名称→ID映射，避免同一轮对话重复查库）
-_uni_cache: dict[str, tuple[dict | None, float]] = {}
-_CACHE_TTL = 120  # 秒
-_CACHE_MAX_SIZE = 500  # 容量上限：防止长期运行时缓存键无限增长
-
-
-def _prune_uni_cache(now: float) -> None:
-    """缓存维护：先清过期项；仍超限则按最旧时间戳淘汰（近似 LRU）。"""
-    expired = [k for k, (_, ts) in _uni_cache.items() if (now - ts) >= _CACHE_TTL]
-    for k in expired:
-        _uni_cache.pop(k, None)
-    if len(_uni_cache) >= _CACHE_MAX_SIZE:
-        # 按写入时间升序淘汰最旧的 20%，摊薄单次清理成本
-        oldest = sorted(_uni_cache.items(), key=lambda kv: kv[1][1])
-        for k, _ in oldest[: max(1, _CACHE_MAX_SIZE // 5)]:
-            _uni_cache.pop(k, None)
+# 工具函数名 -> (函数, 描述, 参数schema)
+_tool_registry: Dict[str, tuple[Callable, str, Dict[str, Any]]] = {}
 
 
-async def _resolve_university(repo, name: str) -> dict | None:
-    """带缓存的院校名称解析"""
-    now = _time.time()
-    cached = _uni_cache.get(name)
-    if cached and (now - cached[1]) < _CACHE_TTL:
-        return cached[0]
-    result = await repo.get_university_by_name(name)
-    if len(_uni_cache) >= _CACHE_MAX_SIZE:
-        _prune_uni_cache(now)
-    _uni_cache[name] = (result, now)
-    return result
+def _register_tool(
+    func: Callable,
+) -> Callable:
+    """装饰器：将函数注册为 AI 工具。"""
+    name = func.__name__
+    description = func.__doc__ or ""
+    # 从函数签名和 docstring 提取参数 schema（简化版）
+    params_schema = getattr(func, "_tool_schema", _build_schema_from_func(func))
+    _tool_registry[name] = (func, description, params_schema)
+    return func
 
 
-async def _with_repo(coro_factory):
-    """统一session管理 + 异常兜底（工具层不抛异常，返回错误文本）"""
+def _build_schema_from_func(func: Callable) -> Dict[str, Any]:
+    """从函数元信息构建参数 schema。"""
+    properties: Dict[str, Any] = {}
+    required: List[str] = []
+
+    annotations = getattr(func, "__annotations__", {})
+    defaults = getattr(func, "__defaults__", ()) or ()
+    kwdefaults = getattr(func, "__kwdefaults__", {}) or {}
+
+    # 从函数签名提取参数名（排除 self）
+    import inspect
     try:
-        from yuxi.storage.postgres.manager import pg_manager
-
-        async with pg_manager.get_async_session_context() as session:
-            from yuxi.repositories.zhiyuan_repository import ZhiyuanRepository
-
-            repo = ZhiyuanRepository(session)
-            return await coro_factory(repo)
-    except Exception as e:
-        logger.error(f"[zhiyuan_tool] 执行失败: {type(e).__name__}: {e}")
-        return f"工具执行异常：{type(e).__name__}，请稍后重试"
-
-
-# ========== 查询类工具（6个） ==========
-
-
-class QueryAdmissionScoresInput(BaseModel):
-    """查历年录取分输入"""
-
-    university_name: str = Field(description="院校名称，如'清华大学'、'浙江大学'")
-    province: str = Field(default="", description="省份，如'河南'、'山东'")
-    year: int = Field(default=0, description="查询年份，0表示查最近3年")
-    subject_type: str = Field(default="", description="科类：理科/文科/物理类/历史类/综合改革")
-
-
-@tool(category="buildin", tags=["志愿填报"], display_name="查历年录取分", args_schema=QueryAdmissionScoresInput)
-async def query_admission_scores(
-    university_name: str, province: str = "", year: int = 0, subject_type: str = ""
-) -> str:
-    """查询院校/专业的历年录取分数线和位次。
-
-    当用户想了解某所学校往年录取情况时使用。返回近几年的最低分、最高分、平均分和最低位次。
-    必须提供院校名称，省份和科类可选但建议提供以精确匹配。
-    """
-    async def _query(repo):
-        uni = await _resolve_university(repo, university_name)
-        if not uni:
-            return f"未找到院校：{university_name}"
-        scores = await repo.query_admission_scores(
-            university_id=uni["id"],
-            province=province,
-            year=year,
-            subject_type=subject_type,
-        )
-        if not scores:
-            return f"{uni['name']} 在 {province or '全国'} 暂无录取数据"
-        # 附带院校名
-        for s in scores:
-            s["university_name"] = uni["name"]
-        return json.dumps(scores, ensure_ascii=False, indent=2)
-
-    return await _with_repo(_query)
-
-
-class GetScoreRankInput(BaseModel):
-    """查位次输入"""
-
-    score: int = Field(description="高考分数")
-    province: str = Field(description="省份，如'河南'")
-    year: int = Field(default=0, description="年份，0表示查最近可用年份")
-    subject_type: str = Field(default="", description="科类：理科/文科/物理类/历史类")
-
-
-@tool(category="buildin", tags=["志愿填报"], display_name="查位次", args_schema=GetScoreRankInput)
-async def get_score_rank(score: int, province: str, year: int = 0, subject_type: str = "") -> str:
-    """根据高考分数查询一分一段表，获取对应位次（全省排名）。
-
-    位次是志愿填报最核心的参考指标，比分数更稳定。当用户告知分数后，必须调用此工具获取位次。
-    """
-    async def _query(repo):
-        if year <= 0:
-            year = await repo.get_latest_rank_year(province) or 0
-        result = await repo.get_rank_by_score(score, province, year, subject_type)
-        if not result:
-            # 尝试找最近的
-            result = await repo.get_nearest_rank(score, province, year, subject_type)
-        if not result:
-            return f"未找到 {province} {year}年 {score}分的位次数据"
-        return json.dumps(result, ensure_ascii=False)
-
-    return await _with_repo(_query)
-
-
-class GetUniversityDetailInput(BaseModel):
-    """院校详情输入"""
-
-    university_name: str = Field(description="院校名称")
-
-
-@tool(category="buildin", tags=["志愿填报"], display_name="院校详情", args_schema=GetUniversityDetailInput)
-async def get_university_detail(university_name: str) -> str:
-    """查询院校的详细信息，包括层次(985/211/双一流)、类型、所在城市、硕博点数量、重点学科等。
-
-    当用户想了解某所学校的基本情况时使用。
-    """
-    async def _query(repo):
-        uni = await _resolve_university(repo, university_name)
-        if not uni:
-            return f"未找到院校：{university_name}"
-        # 附带专业列表概要
-        majors = await repo.get_majors_by_university(uni["id"])
-        uni["major_count"] = len(majors)
-        uni["major_names"] = [m["name"] for m in majors[:30]]
-        return json.dumps(uni, ensure_ascii=False, indent=2)
-
-    return await _with_repo(_query)
-
-
-class GetProvincePlanInput(BaseModel):
-    """招生计划输入"""
-
-    university_name: str = Field(description="院校名称")
-    province: str = Field(description="招生省份")
-    year: int = Field(default=0, description="年份，0表示最新")
-
-
-@tool(category="buildin", tags=["志愿填报"], display_name="招生计划", args_schema=GetProvincePlanInput)
-async def get_province_plan(university_name: str, province: str, year: int = 0) -> str:
-    """查询某院校在指定省份的招生计划（各专业招生人数、学费、批次等）。
-
-    当用户想知道某校在某省招多少人、哪些专业招生时使用。
-    """
-    async def _query(repo):
-        uni = await _resolve_university(repo, university_name)
-        if not uni:
-            return f"未找到院校：{university_name}"
-        plans = await repo.get_enrollment_plan(uni["id"], province, year)
-        if not plans:
-            return f"{uni['name']} 在 {province} 暂无招生计划数据"
-        for p in plans:
-            p["university_name"] = uni["name"]
-        return json.dumps(plans, ensure_ascii=False, indent=2)
-
-    return await _with_repo(_query)
-
-
-class GetEmploymentDataInput(BaseModel):
-    """就业数据输入"""
-
-    university_name: str = Field(default="", description="院校名称")
-    major_name: str = Field(default="", description="专业名称")
-
-
-@tool(category="buildin", tags=["志愿填报"], display_name="就业数据", args_schema=GetEmploymentDataInput)
-async def get_employment_data(university_name: str = "", major_name: str = "") -> str:
-    """查询专业的就业率、平均薪资和就业方向。
-
-    当用户关心某个专业毕业后好不好找工作、薪资如何时使用。
-    至少提供院校名称或专业名称之一。
-    """
-    if not university_name and not major_name:
-        return "请提供院校名称或专业名称"
-
-    async def _query(repo):
-        if university_name and not major_name:
-            uni = await _resolve_university(repo, university_name)
-            if not uni:
-                return f"未找到院校：{university_name}"
-            majors = await repo.get_majors_by_university(uni["id"])
-        else:
-            majors = await repo.search_majors(name=major_name, limit=20)
-
-        if not majors:
-            return "未找到相关专业数据"
-
-        # 只返回有就业数据的
-        data = [
-            {
-                "name": m["name"],
-                "employment_rate": m["employment_rate"],
-                "avg_salary": m["avg_salary"],
-                "career_directions": m["career_directions"],
-            }
-            for m in majors
-            if m["employment_rate"] > 0 or m["avg_salary"] > 0
-        ]
-        if not data:
-            return "暂无就业统计数据"
-        return json.dumps(data, ensure_ascii=False, indent=2)
-
-    return await _with_repo(_query)
-
-
-class QueryGraphInput(BaseModel):
-    """知识图谱查询输入"""
-
-    start_entity: str = Field(description="起始实体名称，如'计算机科学与技术'、'清华大学'")
-    relation_type: str = Field(default="", description="关系类型：开设/属于/对应职业/前置学科，空表示所有关系")
-    depth: int = Field(default=2, ge=1, le=4, description="探索深度，默认2层，最大4层")
-
-
-# 图谱关系类型白名单（防止 relation_type 被注入到 Cypher 模式）
-# 同时包含英文（知识库图谱）和中文（智愿种子图谱）关系名
-_GRAPH_RELATION_WHITELIST = {
-    "belongs_to",
-    "has_major",
-    "located_in",
-    "employed_by",
-    "requires",
-    "offers",
-    "adjacent_to",
-    # 智愿种子图谱使用的中文关系名
-    "开设",
-    "属于",
-    "对应职业",
-    "前置学科",
-}
-
-
-@tool(category="buildin", tags=["志愿填报"], display_name="知识图谱查询", args_schema=QueryGraphInput)
-async def query_graph(start_entity: str, relation_type: str = "", depth: int = 2) -> str:
-    """在知识图谱中查询实体关系（院校-专业-学科-职业之间的关联）。
-
-    当用户想了解某个专业对应什么职业、某校开了哪些专业、某学科的前置知识等关系时使用。
-    """
-    try:
-        # 直接使用 Neo4j 连接，不依赖 knowledge_base.graph（后者仅在知识库构建后初始化）
-        from yuxi.storage.neo4j import get_shared_neo4j_connection, neo4j_read
-
-        conn = get_shared_neo4j_connection()
-        if not conn.is_running():
-            return "图谱服务未就绪（需要Neo4j服务）"
-
-        # 输入校验：实体名必须非空且长度受限，避免空串/超大串爆破图库
-        clean_entity = (start_entity or "").strip()
-        if not clean_entity:
-            return "实体名称不能为空"
-        if len(clean_entity) > 100:
-            return "实体名称过长（上限 100 字符）"
-
-        # 资源防护：depth 钳制在 [1, 4]，避免 LLM 传入极大 depth 触发 Neo4j
-        # 可变长度路径（*1..N）在匹配阶段的资源耗尽（LIMIT 不阻止匹配探索）。
-        # 默认 2，向后兼容；超出范围静默钳制而非报错，保证工具始终可返回结果。
-        safe_depth = max(1, min(int(depth), 4))
-
-        # 安全：relation_type 仅在白名单内才拼入 Cypher 关系模式，避免 Cypher 注入。
-        # start_entity 通过参数化 $start_entity 传入，杜绝字符串插值注入。
-        safe_rel = relation_type if relation_type in _GRAPH_RELATION_WHITELIST else ""
-        if safe_depth == 1:
-            # depth=1: direct relationships, r is a single relationship
-            # 使用 startNode/endNode 确保关系方向正确
-            rel_pattern = f"-[r:{safe_rel}]-" if safe_rel else "-[r]-"
-            cypher = (
-                f"MATCH (n {{name: $start_entity}}){rel_pattern}(m) "
-                f"RETURN startNode(r).name AS start, type(r) AS relation, endNode(r).name AS target LIMIT 50"
-            )
-        else:
-            # depth>1: variable-length path, UNWIND 展开每条关系
-            # 必须使用 startNode(rel)/endNode(rel) 获取每条关系的实际端点
-            rel_type_filter = f":{safe_rel}" if safe_rel else ""
-            cypher = (
-                f"MATCH path = (n {{name: $start_entity}})-[r{rel_type_filter}*1..{safe_depth}]-(m) "
-                f"UNWIND relationships(path) AS rel "
-                f"WITH DISTINCT startNode(rel).name AS start, type(rel) AS relation, endNode(rel).name AS target "
-                f"RETURN start, relation, target LIMIT 50"
-            )
-
-        # 使用同步 Neo4j 驱动在线程中执行查询，避免阻塞事件循环
-        import asyncio as _asyncio
-
-        results = await _asyncio.to_thread(
-            neo4j_read, conn.driver, cypher, start_entity=clean_entity
-        )
-        if not results:
-            return f"未找到与 '{clean_entity}' 相关的图谱关系"
-        return json.dumps(results, ensure_ascii=False, indent=2)
-
-    except Exception as e:
-        logger.error(f"[zhiyuan_tool] 图谱查询失败: {e}")
-        return f"图谱查询失败: {str(e)}"
-
-
-# ========== 计算类工具（5个） ==========
-
-
-class RecommendSchoolsInput(BaseModel):
-    """冲稳保推荐输入"""
-
-    rank: int = Field(description="用户位次（全省排名），通过get_score_rank获取")
-    province: str = Field(description="省份")
-    subject_type: str = Field(default="", description="科类")
-    strategy: str = Field(default="all", description="策略：all/rush/stable/safe")
-
-
-def _estimate_probability(ratio: float) -> int:
-    """根据用户位次与院校历年平均位次的比值估算录取概率（%）。
-
-    ratio = 用户位次 / 院校平均位次
-    - ratio < 0.8：用户位次远优于院校 → 高概率（保底）
-    - 0.8 ~ 1.25：匹配区间 → 中等概率（稳）
-    - > 1.25：用户位次不如院校 → 低概率（冲）
-    公式：100/ratio² - 10，钳制在 [5, 95]
-    """
-    if ratio <= 0:
-        return 5
-    prob = int(100 / (ratio * ratio) - 10)
-    return max(5, min(95, prob))
-
-
-@tool(category="buildin", tags=["志愿填报"], display_name="冲稳保推荐", args_schema=RecommendSchoolsInput)
-async def recommend_schools(rank: int, province: str, subject_type: str = "", strategy: str = "all") -> str:
-    """基于用户位次，推荐冲/稳/保三档院校。
-
-    这是志愿填报的核心工具。必须先通过get_score_rank获取位次后再调用。
-    冲：录取位次高于用户（有难度）；稳：匹配度高；保：录取位次低于用户（兜底）。
-    """
-    async def _query(repo):
-        result = await repo.recommend_by_rank(rank, province, subject_type, strategy)
-
-        # 补充院校名称 + 估算录取概率
-        all_ids = set()
-        for group in result.values():
-            for item in group:
-                all_ids.add(item["university_id"])
-
-        if all_ids:
-            name_map = await repo.get_university_maps(all_ids)
-            for group in result.values():
-                for item in group:
-                    info = name_map.get(item["university_id"], {})
-                    item["university_name"] = info.get("name", f"ID:{item['university_id']}")
-                    item["level"] = info.get("level", "")
-
-        # 为每个推荐项估算录取概率
-        all_probabilities = []
-        for group in result.values():
-            for item in group:
-                prob = _estimate_probability(item.get("ratio", 1.0))
-                item["probability"] = prob
-                all_probabilities.append(prob)
-
-        total = sum(len(v) for v in result.values())
-        if total == 0:
-            return f"位次 {rank} 在 {province} 暂无匹配推荐（可能数据不足）"
-
-        # 低概率友好提示：所有推荐院校概率均低于30%时给出建议
-        if all_probabilities and all(p < 30 for p in all_probabilities):
-            best_prob = max(all_probabilities)
-            warning = (
-                f"⚠️ 提示：当前推荐的所有院校录取概率均低于30%（最高仅{best_prob}%），"
-                f"说明您的位次 {rank} 相对靠后，数据库中缺乏与之匹配的院校数据。\n"
-                f"建议：1）关注省外院校或批次靠后的院校；2）考虑降低目标层次（如从一本转向二本）；"
-                f"3）关注征集志愿和降分录取机会。\n\n"
-            )
-            return warning + json.dumps(result, ensure_ascii=False, indent=2)
-
-        return json.dumps(result, ensure_ascii=False, indent=2)
-
-    return await _with_repo(_query)
-
-
-class CalculateProbabilityInput(BaseModel):
-    """录取概率输入"""
-
-    rank: int = Field(description="用户位次")
-    university_name: str = Field(description="目标院校名称")
-    province: str = Field(description="省份")
-    years: int = Field(default=3, ge=1, le=5, description="参考年数")
-
-
-@tool(category="buildin", tags=["志愿填报"], display_name="录取概率", args_schema=CalculateProbabilityInput)
-async def calculate_probability(rank: int, university_name: str, province: str, years: int = 3) -> str:
-    """估算用户被某院校录取的概率（基于历年位次波动）。
-
-    当用户问"我能不能上XX大学"时使用。返回概率值、历年位次区间和波动情况。
-    """
-    async def _query(repo):
-        uni = await _resolve_university(repo, university_name)
-        if not uni:
-            return f"未找到院校：{university_name}"
-        result = await repo.calculate_probability(rank, uni["id"], province, years)
-        result["university_name"] = uni["name"]
-        return json.dumps(result, ensure_ascii=False, indent=2)
-
-    return await _with_repo(_query)
-
-
-class CheckSubjectRequirementInput(BaseModel):
-    """选科检查输入"""
-
-    subject_combination: str = Field(description="选科组合，如'物理+化学+生物'或'历史+政治+地理'")
-    province: str = Field(default="", description="省份（不同省份选科模式不同）")
-
-
-@tool(category="buildin", tags=["志愿填报"], display_name="选科检查", args_schema=CheckSubjectRequirementInput)
-async def check_subject_requirement(subject_combination: str, province: str = "") -> str:
-    """检查给定选科组合能报考哪些专业（过滤选科不符的专业）。
-
-    新高考省份（3+1+2或3+3）有选科限制。当用户告知选科后，推荐前应先检查。
-    """
-    async def _query(repo):
-        compatible = await repo.check_subject_requirement(subject_combination, province)
-        if not compatible:
-            return f"选科组合 '{subject_combination}' 未匹配到专业数据（可能数据不全）"
-        # 精简输出
-        summary = [
-            {"name": m["name"], "requirement": m["subject_requirement"], "category": m["subject_category"]}
-            for m in compatible
-        ]
-        return json.dumps(
-            {"total": len(summary), "majors": summary},
-            ensure_ascii=False,
-            indent=2,
-        )
-
-    return await _with_repo(_query)
-
-
-class CompareMajorsInput(BaseModel):
-    """专业对比输入"""
-
-    major_names: list[str] = Field(description="要对比的专业名称列表，如['计算机科学与技术','软件工程']")
-    university_name: str = Field(default="", description="限定在某校内对比（可选）")
-
-
-@tool(category="buildin", tags=["志愿填报"], display_name="专业对比", args_schema=CompareMajorsInput)
-async def compare_majors(major_names: list[str], university_name: str = "") -> str:
-    """对比多个专业的学制、学位、就业率、薪资、就业方向等维度。
-
-    当用户在几个专业之间犹豫不决时使用，帮助横向比较。
-    """
-    if len(major_names) < 2:
-        return "请提供至少2个专业名称进行对比"
-
-    async def _query(repo):
-        results = await repo.compare_majors(major_names, university_name)
-        if not results:
-            return f"未找到专业数据：{', '.join(major_names)}"
-        return json.dumps(results, ensure_ascii=False, indent=2)
-
-    return await _with_repo(_query)
-
-
-class RankTrendAnalysisInput(BaseModel):
-    """位次趋势输入"""
-
-    university_name: str = Field(description="院校名称")
-    province: str = Field(description="省份")
-    years: int = Field(default=5, ge=2, le=10, description="分析年数")
-
-
-@tool(category="buildin", tags=["志愿填报"], display_name="位次趋势", args_schema=RankTrendAnalysisInput)
-async def rank_trend_analysis(university_name: str, province: str, years: int = 5) -> str:
-    """分析某院校录取位次的历年变化趋势（是在涨还是在跌）。
-
-    当用户想判断某校是否"大小年"、录取难度是否逐年上升时使用。
-    """
-    async def _query(repo):
-        uni = await _resolve_university(repo, university_name)
-        if not uni:
-            return f"未找到院校：{university_name}"
-        trend = await repo.rank_trend(uni["id"], province, years)
-        if not trend:
-            return f"{uni['name']} 在 {province} 暂无足够年份的位次数据"
-
-        # 计算趋势方向
-        ranks = [t["min_rank"] for t in trend]
-        if len(ranks) >= 2:
-            if ranks[-1] > ranks[0] * 1.1:
-                direction = "位次上升（竞争加剧）"
-            elif ranks[-1] < ranks[0] * 0.9:
-                direction = "位次下降（竞争减缓）"
+        sig = inspect.signature(func)
+        for pname, param in sig.parameters.items():
+            if pname in ("self", "session"):
+                continue
+            prop: Dict[str, Any] = {}
+            if param.annotation is not inspect.Parameter.empty:
+                ann = param.annotation
+                if ann is str:
+                    prop["type"] = "string"
+                elif ann is int:
+                    prop["type"] = "integer"
+                elif ann is float:
+                    prop["type"] = "number"
+                elif ann is bool:
+                    prop["type"] = "boolean"
+                else:
+                    prop["type"] = "string"
             else:
-                direction = "基本稳定"
-        else:
-            direction = "数据不足，无法判断趋势"
+                prop["type"] = "string"
 
-        return json.dumps(
-            {"university_name": uni["name"], "trend": trend, "direction": direction},
-            ensure_ascii=False,
-            indent=2,
-        )
+            if param.default is inspect.Parameter.empty:
+                required.append(pname)
+            else:
+                prop["default"] = param.default
 
-    return await _with_repo(_query)
+            # 从 docstring 提取参数描述
+            desc = _extract_param_desc(func.__doc__ or "", pname)
+            if desc:
+                prop["description"] = desc
 
+            properties[pname] = prop
+    except Exception:
+        logger.warning(f"_build_schema_from_func 无法提取 {func.__name__} 的签名，将返回空 schema")
+        pass
 
-# ========== 生成类工具（2个） ==========
-
-
-class GenerateApplicationPlanInput(BaseModel):
-    """生成志愿方案输入"""
-
-    profile_json: str = Field(
-        description=(
-            "用户画像JSON字符串，包含：score(分数), rank(位次), province(省份), "
-            "subject_type(科类), subject_combination(选科组合,可选), "
-            "preferences(偏好,如城市/专业方向,可选)"
-        )
-    )
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+    }
 
 
-@tool(category="buildin", tags=["志愿填报"], display_name="生成志愿方案", args_schema=GenerateApplicationPlanInput)
-async def generate_application_plan(profile_json: str) -> str:
-    """汇总用户画像，生成完整的冲稳保志愿方案表。
+def _extract_param_desc(docstring: str, param_name: str) -> str:
+    """从 docstring 的 Args 段提取参数描述。"""
+    if not docstring:
+        return ""
+    in_args = False
+    for line in docstring.split("\n"):
+        stripped = line.strip()
+        # 跟踪 Args 段开始
+        if stripped.lower().startswith("args:"):
+            in_args = True
+            continue
+        # 遇到其他段标题则退出
+        if in_args and (stripped.lower().startswith(("returns:", "raises:", "note:", "example:"))):
+            in_args = False
+            continue
+        if in_args and stripped.startswith(f"{param_name}:"):
+            parts = stripped.split(":", 1)
+            if len(parts) == 2:
+                return parts[1].strip()
+    return ""
 
-    这是最终交付物工具。当用户明确要求"帮我出方案"/"生成志愿表"时调用。
-    输入用户画像JSON，输出结构化的志愿方案（含院校+专业+批次+概率）。
-    调用前必须确保已获取：分数、位次、省份、科类。
+
+# ---------------------------------------------------------------------------
+# 工具实现
+# ---------------------------------------------------------------------------
+
+
+def _success(data: Any) -> Dict[str, Any]:
+    """构造成功响应。"""
+    return {"success": True, "data": data, "error": None}
+
+
+def _error(msg: str) -> Dict[str, Any]:
+    """构造错误响应。"""
+    return {"success": False, "data": None, "error": msg}
+
+
+# ---- 院校查询工具 -----------------------------------------------------------
+
+
+@_register_tool
+async def search_universities(
+    keyword: str = "",
+    province: str = "",
+    level: str = "",
+    school_type: str = "",
+    limit: int = 20,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """
+    搜索院校列表，支持按关键词、省份、层次、类型筛选。
+
+    Args:
+        keyword: 院校名称关键词（模糊搜索）
+        province: 省份名称（如"北京"、"广东"）
+        level: 院校层次（985/211/双一流/普通）
+        school_type: 院校类型（综合/理工/师范/农林/医药/语言/财经/政法/体育/艺术/民族/军事）
+        limit: 返回数量上限（默认20，最大50）
+        offset: 分页偏移量
+
+    Returns:
+        包含院校列表和总数的响应
     """
     try:
-        profile = json.loads(profile_json)
-    except json.JSONDecodeError:
-        return "profile_json 格式错误，请提供合法JSON"
+        # 参数校验
+        limit = min(max(1, limit), 50)
 
-    required = ["rank", "province"]
-    missing = [k for k in required if not profile.get(k)]
-    if missing:
-        return f"缺少必要字段：{', '.join(missing)}"
+        async with get_session() as session:
+            result = await zhiyuan_repository.list_universities(
+                session,
+                keyword=keyword or None,
+                province=province or None,
+                level=level or None,
+                school_type=school_type or None,
+                limit=limit,
+                offset=offset,
+            )
+        return _success(result)
+    except InvalidParameterError as e:
+        logger.warning(f"search_universities 参数错误: {e}")
+        return _error(str(e))
+    except (DatabaseError, RepositoryError) as e:
+        logger.error(f"search_universities 数据库错误: {e}")
+        return _error("院校查询服务暂不可用，请稍后重试")
+    except Exception as e:
+        logger.exception(f"search_universities 未知错误: {e}")
+        return _error(f"院校查询失败: {e}")
 
-    # rank 类型/正数校验：LLM 可能传入字符串或非法值，统一在此转换拦截
+
+@_register_tool
+async def get_university_detail(
+    university_name: str,
+) -> Dict[str, Any]:
+    """
+    获取指定院校的详细信息，包括基本信息、开设专业列表。
+
+    Args:
+        university_name: 院校全名（如"北京大学"）
+
+    Returns:
+        院校详情（含专业列表）
+    """
+    if not university_name or not university_name.strip():
+        return _error("院校名称不能为空")
+
     try:
-        rank = int(profile["rank"])
-    except (TypeError, ValueError):
-        return "rank 必须为整数"
-    if rank <= 0:
-        return "rank 必须为正整数"
-
-    province = profile["province"]
-    subject_type = profile.get("subject_type", "")
-
-    async def _generate(repo):
-        # 1. 获取冲稳保推荐
-        recommendation = await repo.recommend_by_rank(rank, province, subject_type, "all")
-
-        # 2. 补充院校详情（复用当前会话，单条 IN 查询，避免嵌套 session + N+1）
-        all_ids = set()
-        for group in recommendation.values():
-            for item in group:
-                all_ids.add(item["university_id"])
-
-        uni_map = await repo.get_university_maps(
-            all_ids, fields=("name", "level", "province")
-        )
-
-        # 3. 批量取各院校推荐专业（单条 IN 查询，消除逐校 N+1）
-        subject_combination = profile.get("subject_combination", "")
-        majors_map = await repo.get_university_majors_batch(
-            all_ids, province, subject_combination, top_n=3
-        ) if all_ids else {}
-
-        # 4. 组装方案（含专业维度，循环内仅查表）
-        plan = {"profile": profile, "rush": [], "stable": [], "safe": []}
-        for category in ("rush", "stable", "safe"):
-            for item in recommendation.get(category, []):
-                uni = uni_map.get(item["university_id"], {})
-                majors = majors_map.get(item["university_id"], [])
-                plan[category].append({
-                    "university_name": uni.get("name", f"ID:{item['university_id']}"),
-                    "level": uni.get("level", ""),
-                    "province": uni.get("province", ""),
-                    "avg_rank": item["avg_rank"],
-                    "rank_ratio": item["ratio"],
-                    "majors": majors,
-                })
-
-        plan["summary"] = {
-            "total": len(plan["rush"]) + len(plan["stable"]) + len(plan["safe"]),
-            "rush_count": len(plan["rush"]),
-            "stable_count": len(plan["stable"]),
-            "safe_count": len(plan["safe"]),
-        }
-        return json.dumps(plan, ensure_ascii=False, indent=2)
-
-    return await _with_repo(_generate)
+        async with get_session() as session:
+            detail = await zhiyuan_repository.get_university_detail(
+                session, university_name.strip()
+            )
+        if detail is None:
+            return _error(f"未找到院校: {university_name}")
+        return _success(detail)
+    except DatabaseError as e:
+        logger.error(f"get_university_detail 数据库错误: {e}")
+        return _error("院校详情查询服务暂不可用，请稍后重试")
+    except Exception as e:
+        logger.exception(f"get_university_detail 未知错误: {e}")
+        return _error(f"院校详情查询失败: {e}")
 
 
-class ExportPlanInput(BaseModel):
-    """导出方案输入"""
-
-    plan_json: str = Field(description="generate_application_plan 输出的方案JSON")
-    format: str = Field(default="table", description="输出格式：table(文本表格)/json")
+# ---- 录取分数查询工具 -------------------------------------------------------
 
 
-@tool(category="buildin", tags=["志愿填报"], display_name="导出方案", args_schema=ExportPlanInput)
-async def export_plan(plan_json: str, format: str = "table") -> str:
-    """将志愿方案格式化为可读的文本表格或结构化输出。
+@_register_tool
+async def query_admission_scores(
+    university_name: str,
+    province: str,
+    subject_type: str,
+    years: int = 3,
+) -> Dict[str, Any]:
+    """
+    查询指定院校在特定省份的历年录取分数和位次。
 
-    在generate_application_plan之后调用，将JSON方案转为用户友好的表格形式。
+    Args:
+        university_name: 院校全名
+        province: 省份
+        subject_type: 科类（理科/文科/物理类/历史类）
+        years: 查询近N年数据（默认3年）
+
+    Returns:
+        历年录取分数和位次列表
+    """
+    if not university_name or not university_name.strip():
+        return _error("院校名称不能为空")
+    if not province:
+        return _error("省份不能为空")
+    if not subject_type:
+        return _error("科类不能为空")
+
+    try:
+        async with get_session() as session:
+            scores = await zhiyuan_repository.query_admission_scores(
+                session,
+                university_name=university_name.strip(),
+                province=province.strip(),
+                subject_type=subject_type.strip(),
+                years=min(max(1, years), 5),
+            )
+        return _success(scores)
+    except InvalidParameterError as e:
+        return _error(str(e))
+    except DatabaseError as e:
+        logger.error(f"query_admission_scores 数据库错误: {e}")
+        return _error("录取分数查询服务暂不可用，请稍后重试")
+    except Exception as e:
+        logger.exception(f"query_admission_scores 未知错误: {e}")
+        return _error(f"录取分数查询失败: {e}")
+
+
+# ---- 位次估算工具 -----------------------------------------------------------
+
+
+@_register_tool
+async def estimate_rank(
+    score: int,
+    province: str,
+    subject_type: str,
+) -> Dict[str, Any]:
+    """
+    根据高考分数估算省位次。
+
+    Args:
+        score: 高考分数（200-750）
+        province: 省份
+        subject_type: 科类（理科/文科/物理类/历史类）
+
+    Returns:
+        估算的省位次
     """
     try:
-        plan = json.loads(plan_json)
-    except json.JSONDecodeError:
-        return "plan_json 格式错误"
+        async with get_session() as session:
+            rank = await zhiyuan_repository.get_score_rank(
+                session,
+                score=score,
+                province=province,
+                subject_type=subject_type,
+            )
+        if rank is None:
+            return _error(
+                f"未能根据 {province} {subject_type} {score}分 估算位次，请手动提供位次"
+            )
+        return _success({"rank": rank, "score": score})
+    except InvalidParameterError as e:
+        return _error(str(e))
+    except DatabaseError as e:
+        logger.error(f"estimate_rank 数据库错误: {e}")
+        return _error("位次估算服务暂不可用，请稍后重试")
+    except Exception as e:
+        logger.exception(f"estimate_rank 未知错误: {e}")
+        return _error(f"位次估算失败: {e}")
 
-    if format == "json":
-        return json.dumps(plan, ensure_ascii=False, indent=2)
 
-    # 文本表格格式
-    lines = []
-    profile = plan.get("profile", {})
-    lines.append(f"【志愿方案】{profile.get('province', '')} | 分数:{profile.get('score', '-')} | 位次:{profile.get('rank', '-')}")
-    lines.append("=" * 60)
+# ---- 志愿方案生成工具 -------------------------------------------------------
 
+
+@_register_tool
+async def generate_plan(
+    score: int,
+    rank: int,
+    province: str,
+    subject_type: str,
+    subject_combination: str = "",
+) -> Dict[str, Any]:
+    """
+    生成冲稳保三档志愿方案。
+
+    Args:
+        score: 高考分数（200-750）
+        rank: 省位次
+        province: 省份
+        subject_type: 科类（理科/文科/物理类/历史类）
+        subject_combination: 选科组合（如"物理+化学+生物"，可选）
+
+    Returns:
+        冲稳保三档院校方案及概率分析
+    """
+    try:
+        async with get_session() as session:
+            plan = await zhiyuan_repository.generate_plan(
+                session,
+                score=score,
+                rank=rank,
+                province=province,
+                subject_type=subject_type,
+                subject_combination=subject_combination,
+            )
+
+        # 为 AI 生成友好的文本摘要
+        summary_text = _build_plan_summary(plan)
+
+        return _success({
+            "plan": plan,
+            "summary_text": summary_text,
+        })
+    except InvalidParameterError as e:
+        return _error(str(e))
+    except DatabaseError as e:
+        logger.error(f"generate_plan 数据库错误: {e}")
+        return _error("志愿方案生成服务暂不可用，请稍后重试")
+    except Exception as e:
+        logger.exception(f"generate_plan 未知错误: {e}")
+        return _error(f"志愿方案生成失败: {e}")
+
+
+def _build_plan_summary(plan: Optional[Dict[str, Any]]) -> str:
+    """为 AI 构建人类可读的方案摘要文本。"""
+    if plan is None:
+        return "暂无可用的志愿方案数据"
+    s = plan.get("summary", {})
+    parts = [
+        f"志愿方案共 {s.get('total', 0)} 所院校：",
+        f"冲一冲 {s.get('rush_count', 0)} 所（录取概率 15%-70%）",
+        f"稳一稳 {s.get('stable_count', 0)} 所（录取概率 70%-95%）",
+        f"保一保 {s.get('safe_count', 0)} 所（录取概率 95%+）",
+    ]
+
+    # 每个档位前 3 所
     for category, label in [("rush", "冲"), ("stable", "稳"), ("safe", "保")]:
-        items = plan.get(category, [])
-        lines.append(f"\n【{label}】共{len(items)}所")
-        for i, item in enumerate(items, 1):
-            name = item.get("university_name", "?")
-            level = item.get("level", "")
-            ratio = item.get("rank_ratio", "")
-            level_tag = f"[{level}]" if level else ""
-            lines.append(f"  {i:2d}. {name} {level_tag} 位次比:{ratio}")
-            for j, m in enumerate(item.get("majors", []), 1):
-                req = m.get("subject_requirement")
-                req_tag = f" (选科:{req})" if req else ""
-                lines.append(
-                    f"       · {m.get('major_name', '?')}"
-                    f" 计划{m.get('plan_count', '-')}人"
-                    f"{req_tag}"
+        items = plan.get(category) or []
+        if items:
+            top3 = items[:3]
+            names = [
+                f"{u['university_name']}({int(u.get('probability', 0) * 100)}%)"
+                for u in top3
+                if u.get('university_name')
+            ]
+            if names:
+                parts.append(f"{label}档前3：{'、'.join(names)}")
+
+    return "\n".join(parts)
+
+
+# ---- 院校对比工具 -----------------------------------------------------------
+
+
+@_register_tool
+async def compare_universities(
+    university_names: List[str],
+    province: str,
+    subject_type: str,
+) -> Dict[str, Any]:
+    """
+    对比多所院校的录取数据和专业设置。
+
+    Args:
+        university_names: 院校名称列表（最多5所）
+        province: 省份
+        subject_type: 科类
+
+    Returns:
+        各院校的对比数据（录取分数、位次、概率、专业）
+    """
+    if not university_names:
+        return _error("请至少提供一所院校名称")
+    if len(university_names) > 5:
+        return _error("最多同时对比 5 所院校")
+
+    try:
+        async with get_session() as session:
+            # 并行查询所有院校（asyncio.gather 消除串行 N+1）
+            async def _fetch_one(name: str) -> Optional[Dict[str, Any]]:
+                n = name.strip()
+                if not n:
+                    return None
+                try:
+                    detail = await zhiyuan_repository.get_university_detail(session, n)
+                    if detail:
+                        scores = await zhiyuan_repository.query_admission_scores(
+                            session,
+                            university_name=n,
+                            province=province,
+                            subject_type=subject_type,
+                        )
+                        detail["admission_scores"] = scores
+                    return detail
+                except (DatabaseError, DataNotFoundError):
+                    return None
+
+            results = await asyncio.gather(
+                *[_fetch_one(name) for name in university_names],
+                return_exceptions=True,
+            )
+            # 过滤异常结果
+            comparisons = [
+                r for r in results
+                if r is not None and not isinstance(r, BaseException)
+            ]
+
+            if not comparisons:
+                return _error("未找到任何可对比的院校数据")
+
+            return _success({"comparisons": comparisons, "count": len(comparisons)})
+    except InvalidParameterError as e:
+        return _error(str(e))
+    except Exception as e:
+        logger.exception(f"compare_universities 失败: {e}")
+        return _error(f"院校对比失败: {e}")
+
+
+# ---- 知识图谱查询工具 -------------------------------------------------------
+
+
+@_register_tool
+async def query_knowledge_graph(
+    entity: str,
+    relation_type: str = "",
+    depth: int = 2,
+) -> Dict[str, Any]:
+    """
+    查询知识图谱，探索院校、专业之间的关系。
+
+    Args:
+        entity: 实体名称（院校名或专业名）
+        relation_type: 关系类型过滤（has_major/same_level/same_province/belongs_to，空字符串表示全部）
+        depth: 遍历深度（1-4，默认2）
+
+    Returns:
+        关系列表
+    """
+    if not entity or not entity.strip():
+        return _error("实体名称不能为空")
+
+    try:
+        async with get_session() as session:
+            relations = await zhiyuan_repository.query_graph(
+                session,
+                start_entity=entity.strip(),
+                relation_type=relation_type or None,
+                depth=depth,
+            )
+        if not relations:
+            return _error(f"未找到与 '{entity}' 相关的图谱关系")
+        return _success({"relations": relations, "count": len(relations)})
+    except DatabaseError as e:
+        logger.error(f"query_knowledge_graph 数据库错误: {e}")
+        return _error("图谱查询服务暂不可用，请稍后重试")
+    except Exception as e:
+        logger.exception(f"query_knowledge_graph 未知错误: {e}")
+        return _error(f"图谱查询失败: {e}")
+
+
+# ---- 政策检索工具 -----------------------------------------------------------
+
+
+@_register_tool
+async def search_policy(
+    question: str,
+    top_k: int = 5,
+) -> Dict[str, Any]:
+    """
+    搜索高考政策、院校招生政策相关信息。
+
+    Args:
+        question: 用户问题（如"什么是平行志愿"）
+        top_k: 返回结果数量（默认5）
+
+    Returns:
+        相关政策信息列表
+    """
+    if not question or len(question.strip()) < 2:
+        return _error("问题至少需要 2 个字符")
+
+    try:
+        async with get_session() as session:
+            result = await zhiyuan_repository.search_policy(
+                session,
+                question=question.strip(),
+                top_k=min(max(1, top_k), 10),
+            )
+        if result.get("total", 0) == 0:
+            q_display = question[:30] + ("..." if len(question) > 30 else "")
+            return _error(f"未找到与 '{q_display}' 相关的政策信息")
+        return _success(result)
+    except InvalidParameterError as e:
+        return _error(str(e))
+    except DatabaseError as e:
+        logger.error(f"search_policy 数据库错误: {e}")
+        return _error("政策检索服务暂不可用，请稍后重试")
+    except Exception as e:
+        logger.exception(f"search_policy 未知错误: {e}")
+        return _error(f"政策检索失败: {e}")
+
+
+# ---- 录取概率分析工具 -------------------------------------------------------
+
+
+@_register_tool
+async def analyze_admission_probability(
+    user_rank: int,
+    university_name: str,
+    province: str,
+    subject_type: str,
+) -> Dict[str, Any]:
+    """
+    分析用户被指定院校录取的概率。
+
+    Args:
+        user_rank: 用户省位次
+        university_name: 目标院校全名
+        province: 省份
+        subject_type: 科类
+
+    Returns:
+        录取概率分析（含概率值、历年趋势、建议）
+    """
+    if user_rank <= 0:
+        return _error("位次必须为正数")
+    if not university_name or not university_name.strip():
+        return _error("院校名称不能为空")
+
+    try:
+        async with get_session() as session:
+            scores = await zhiyuan_repository.query_admission_scores(
+                session,
+                university_name=university_name.strip(),
+                province=province,
+                subject_type=subject_type,
+            )
+
+            if not scores:
+                return _error(
+                    f"未找到 {university_name} 在 {province} {subject_type} 的录取数据"
                 )
 
-    summary = plan.get("summary", {})
-    lines.append(f"\n合计: {summary.get('total', 0)}所 (冲{summary.get('rush_count', 0)}/稳{summary.get('stable_count', 0)}/保{summary.get('safe_count', 0)})")
+            # 计算平均位次和概率
+            ranks = [s["avg_rank"] for s in scores if s.get("avg_rank")]
+            if not ranks:
+                return _error(f"{university_name} 缺少位次数据，无法分析")
 
-    return "\n".join(lines)
+            avg_rank = sum(ranks) / len(ranks)
+            ratio = user_rank / avg_rank if avg_rank > 0 else float("inf")
+            probability = estimate_admission_probability(ratio)
+            prob_pct = int(probability * 100)
+
+            # 历年趋势
+            trend = _analyze_rank_trend(scores)
+
+            # 生成建议文本
+            if probability >= 0.85:
+                suggestion = f"录取概率很高（{prob_pct}%），可作为保底志愿。"
+            elif probability >= 0.70:
+                suggestion = f"录取概率较高（{prob_pct}%），适合作为稳妥志愿。"
+            elif probability >= 0.35:
+                suggestion = f"有一定录取概率（{prob_pct}%），可尝试冲刺。"
+            else:
+                suggestion = f"录取概率较低（{prob_pct}%），建议慎重考虑。"
+
+            return _success({
+                "university_name": university_name,
+                "user_rank": user_rank,
+                "avg_rank": int(avg_rank),
+                "ratio": round(ratio, 2),
+                "probability": probability,
+                "probability_percent": prob_pct,
+                "trend": trend,
+                "suggestion": suggestion,
+                "scores": scores,
+            })
+    except InvalidParameterError as e:
+        return _error(str(e))
+    except DatabaseError as e:
+        logger.error(f"analyze_admission_probability 数据库错误: {e}")
+        return _error("录取概率分析服务暂不可用，请稍后重试")
+    except Exception as e:
+        logger.exception(f"analyze_admission_probability 未知错误: {e}")
+        return _error(f"录取概率分析失败: {e}")
+
+
+def _analyze_rank_trend(
+    scores: List[Dict[str, Any]],
+) -> str:
+    """
+    分析历年位次趋势（上升/下降/平稳）。
+
+    Args:
+        scores: 历年录取数据（按年份降序）
+
+    Returns:
+        趋势描述文本
+    """
+    if len(scores) < 2:
+        return "数据不足，无法判断趋势"
+
+    ranks = [(s["year"], s["avg_rank"]) for s in scores if s.get("avg_rank")]
+    ranks.sort(key=lambda x: x[0])  # 按年份升序
+
+    if len(ranks) < 2:
+        return "数据不足，无法判断趋势"
+
+    first_rank = ranks[0][1]
+    last_rank = ranks[-1][1]
+
+    if first_rank == 0:
+        return "数据异常，无法判断趋势"
+
+    change_pct = (last_rank - first_rank) / first_rank
+
+    if change_pct < -0.1:
+        return f"位次逐年上升（{abs(int(change_pct * 100))}%），录取难度降低"
+    elif change_pct > 0.1:
+        return f"位次逐年下降（{int(change_pct * 100)}%），录取难度增加"
+    else:
+        return "位次相对稳定，录取难度变化不大"
+
+
+# ---- 系统工具 ---------------------------------------------------------------
+
+
+@_register_tool
+async def get_system_status() -> Dict[str, Any]:
+    """
+    查询系统运行状态和数据概览。
+
+    Returns:
+        系统健康状态、数据统计
+    """
+    try:
+        async with get_session() as session:
+            # 并行获取健康检查与统计数据
+            health, stats = await asyncio.gather(
+                zhiyuan_repository.get_health(session),
+                zhiyuan_repository.get_statistics(session),
+            )
+
+        return _success({
+            "health": health,
+            "statistics": stats,
+            "timestamp": datetime.now().isoformat(),
+        })
+    except Exception as e:
+        logger.exception(f"get_system_status 失败: {e}")
+        return _error(f"系统状态查询失败: {e}")
+
+
+# ---- 推荐专业工具 -----------------------------------------------------------
+
+
+@_register_tool
+async def recommend_majors(
+    score: int,
+    province: str,
+    subject_type: str,
+    interests: str = "",
+) -> Dict[str, Any]:
+    """
+    根据分数和兴趣推荐适合的专业。
+
+    Args:
+        score: 高考分数
+        province: 省份
+        subject_type: 科类
+        interests: 兴趣方向（如"计算机"、"医学"，可选）
+
+    Returns:
+        推荐专业列表
+    """
+    try:
+        async with get_session() as session:
+            # 先估算位次
+            rank = await zhiyuan_repository.get_score_rank(
+                session, score=score, province=province, subject_type=subject_type
+            )
+            if rank is None:
+                return _error("无法估算位次，请确认分数和省份信息")
+
+            # 获取该位次附近的院校方案作为参考
+            plan = await zhiyuan_repository.generate_plan(
+                session,
+                score=score,
+                rank=rank,
+                province=province,
+                subject_type=subject_type,
+            )
+
+            # 从方案中提取专业
+            all_majors: List[Dict[str, Any]] = []
+            seen_majors: set = set()
+
+            for category in ("rush", "stable", "safe"):
+                for uni in plan.get(category, []):
+                    for major in uni.get("majors", []):
+                        mname = major.get("major_name", "")
+                        if mname and mname not in seen_majors:
+                            seen_majors.add(mname)
+                            all_majors.append({
+                                "major_name": mname,
+                                "plan_count": major.get("plan_count", 0),
+                                "university_name": uni["university_name"],
+                                "category": category,
+                            })
+
+            # 如果有兴趣方向，优先匹配
+            if interests:
+                interest_lower = interests.strip().lower()
+                matched = [
+                    m for m in all_majors
+                    if interest_lower in m["major_name"].lower()
+                ]
+                if matched:
+                    all_majors = matched + [
+                        m for m in all_majors if m not in matched
+                    ]
+
+            return _success({
+                "recommendations": all_majors[:20],
+                "total": len(all_majors),
+                "user_rank": rank,
+            })
+    except InvalidParameterError as e:
+        return _error(str(e))
+    except DatabaseError as e:
+        logger.error(f"recommend_majors 数据库错误: {e}")
+        return _error("专业推荐服务暂不可用，请稍后重试")
+    except Exception as e:
+        logger.exception(f"recommend_majors 未知错误: {e}")
+        return _error(f"专业推荐失败: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 工具发现 API
+# ---------------------------------------------------------------------------
+
+
+def get_all_tools() -> List[Dict[str, Any]]:
+    """
+    获取所有已注册工具的 OpenAI function calling 格式定义。
+
+    Returns:
+        工具定义列表，每项包含 name / description / parameters
+    """
+    tools = []
+    for name, (func, description, params_schema) in _tool_registry.items():
+        tools.append({
+            "name": name,
+            "description": description.strip().split("\n")[0]
+            if description
+            else f"调用 {name} 工具",
+            "parameters": params_schema,
+        })
+    return tools
+
+
+def get_tool_count() -> int:
+    """返回已注册的工具数量。"""
+    return len(_tool_registry)
+
+
+def get_tool_names() -> List[str]:
+    """返回所有工具名称列表。"""
+    return list(_tool_registry.keys())

@@ -88,9 +88,11 @@ class AgentManager(metaclass=SingletonMeta):
 
 
 agent_manager = AgentManager()
-# 自动发现并注册所有智能体
+# 自动发现所有智能体类（轻量操作，仅注册类引用）
 agent_manager.auto_discover_agents()
-agent_manager.init_all_agents()
+# 注意：init_all_agents() 已移除模块级调用。
+# Agent 实例将按需懒加载（首次 get_agent() 时创建），
+# 避免模块导入时的重量级初始化（如 LLM 连接、图编译等）。
 
 __all__ = ["agent_manager"]
 

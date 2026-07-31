@@ -125,16 +125,6 @@ const NODE_TYPE_COLORS = {
   'Entity': '#6dc8ec',
 }
 
-// 根据节点名称推断类型
-function inferNodeType(name, relation) {
-  // 通过关系推断
-  if (relation === '开设' || relation === 'has_major') {
-    // start 是院校, target 是专业
-    return null // 需要上下文
-  }
-  return 'Entity'
-}
-
 /**
  * 将扁平的关系列表转换为 GraphCanvas 所需的 { nodes, edges } 格式
  */
@@ -224,6 +214,8 @@ function inferNodeTypeFromRelation(name, relation, position) {
 
 const graphData = computed(() => buildGraphData(relations.value))
 
+let _graphQuerySeq = 0 // 请求序号，防竞态
+
 async function handleQuery() {
   const entityErr = validateGraphEntity(entity.value)
   if (entityErr) {
@@ -243,6 +235,7 @@ async function handleQuery() {
   loading.value = true
   queried.value = true
   selectedNode.value = null
+  const seq = ++_graphQuerySeq
   try {
     const params = buildGraphQueryParams({
       entity: entity.value,
@@ -250,6 +243,7 @@ async function handleQuery() {
       depth: depth.value,
     })
     const res = await zhiyuanApi.queryGraph(params)
+    if (seq !== _graphQuerySeq) return
     const data = resolveGraph(res)
     graphCache.set(key, data)
     relations.value = data
@@ -257,10 +251,11 @@ async function handleQuery() {
       message.info('未找到相关关系，试试其他实体名称或增加深度')
     }
   } catch (e) {
+    if (seq !== _graphQuerySeq) return
     message.error('图谱查询失败：' + (e.message || '服务未就绪'))
     relations.value = []
   } finally {
-    loading.value = false
+    if (seq === _graphQuerySeq) loading.value = false
   }
 }
 

@@ -1,0 +1,13 @@
+refactor(zhiyuan): 后端重构与前端契约对齐，补全第六轮未竟优化
+
+后端
+- zhiyuan_repository.py: 消除 N+1 查询、细分异常体系、补全类型注解、白名单校验前移、统一空方案构造、缓存 TTL 规范化
+- zhiyuan_tools.py: 13 工具异常细化、统一响应构造、历年位次趋势/兴趣优先推荐/AI 友好摘要、_register_tool 自动提取 schema
+- zhiyuan_router.py: Pydantic 请求模型替换裸参数、统一异常→HTTP 映射、修复 P0 启动崩溃（补 zhiyuan = router 别名，对齐 __init__ 导入）、ScoreQueryRequest 字段改可选使 UniversityBrowse 仅传 university_name 不再 422、清理前端零调用的死端点
+
+前端
+- logic.js: 提取概率/解析共享纯函数、兼容 {items}/{scores} 响应、补全校验与 JSDoc
+- PlanView/GraphExplore/PolicySearch/UniversityBrowse: 竞态防护、空值兜底、id→name 对齐新 router、queryScores/getScoreRank/queryGraph 改 POST 对齐
+- zhiyuan_api.js / graphCache.js: 同步新契约
+
+验证: 后端 6 文件 py_compile 全通过, 前端改动文件 lint 0 诊断

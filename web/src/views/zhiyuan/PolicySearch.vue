@@ -38,7 +38,7 @@
       <div class="results-header">
         <h4 class="section-title">
           检索结果
-          <a-tag color="blue" style="margin-left: 8px">{{ results.total }} 条</a-tag>
+          <a-tag color="blue" style="margin-left: 8px">{{ results.total ?? 0 }} 条</a-tag>
           <a-tag v-if="results.kb_name" color="cyan" style="margin-left: 4px">
             来源：{{ results.kb_name }}
           </a-tag>
@@ -54,7 +54,7 @@
 
       <div class="result-list">
         <div
-          v-for="(item, idx) in results.results"
+          v-for="(item, idx) in (results.results || [])"
           :key="idx"
           class="result-card"
         >
@@ -97,6 +97,7 @@ const loading = ref(false)
 const results = ref(null)
 const errorMsg = ref('')
 const suggestions = ref([])
+let _searchSeq = 0 // 请求序号，防竞态
 
 async function loadSuggestions() {
   try {
@@ -118,17 +119,20 @@ async function handleSearch() {
   loading.value = true
   errorMsg.value = ''
   results.value = null
+  const seq = ++_searchSeq
   try {
     const res = await zhiyuanApi.searchPolicy({ question: q, top_k: 5 })
+    if (seq !== _searchSeq) return // 已有更新的请求，丢弃本次结果
     results.value = res?.data || null
     if (results.value && results.value.total === 0) {
       message.info('未检索到相关内容，请尝试换个问法')
     }
   } catch (e) {
+    if (seq !== _searchSeq) return
     const detail = e?.response?.data?.detail || e?.message || '检索失败'
     errorMsg.value = typeof detail === 'string' ? detail : '政策检索服务暂不可用'
   } finally {
-    loading.value = false
+    if (seq === _searchSeq) loading.value = false
   }
 }
 
