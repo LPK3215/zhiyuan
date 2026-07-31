@@ -122,7 +122,7 @@
  *
  * 组件树：PlanView → PlanTable（内联表格，接收 data prop 渲染）
  */
-import { ref, h, defineComponent, resolveComponent } from 'vue'
+import { ref, h, defineComponent, resolveComponent, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { zhiyuanApi } from '@/apis/zhiyuan_api'
 import { PROVINCES, SUBJECT_TYPES } from '@/constants/zhiyuanOptions'
@@ -164,6 +164,19 @@ const profile = ref({
 const plan = ref(null)
 const generating = ref(false)
 const activeTab = ref('rush')
+
+/**
+ * 监听分数/省份/科类变化时清除位次，防止用户修改条件后仍使用旧的位次生成方案。
+ * 旧位次与新分数不匹配会导致冲稳保推荐不准确。
+ */
+watch(
+  () => [profile.value.score, profile.value.province, profile.value.subject_type],
+  () => {
+    if (profile.value.rank) {
+      profile.value.rank = undefined
+    }
+  }
+)
 
 /** 请求序号，防止快速重复点击导致竞态 */
 let _genSeq = 0

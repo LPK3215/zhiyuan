@@ -80,6 +80,7 @@ export function buildUniversitySearchParams({ keyword = '', filters = {} } = {})
     province: safeFilters.province || undefined,
     level: safeFilters.level || undefined,
     type: safeFilters.type || undefined,
+    limit: 200,
   }
 }
 

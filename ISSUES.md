@@ -2,7 +2,7 @@
 
 > **维护规则**：本文件是唯一的问题追踪源。每次发现新问题追加到对应分类；每次修复后立即更新状态（`未修复` → `已修复`）。禁止在其他地方维护重复清单。
 
-> **最后更新**：2026-07-31（第七轮全量扫描完成 — 发现 5 个新问题，全部修复）
+> **最后更新**：2026-07-31（第八轮全量扫描完成 — 发现 3 个新问题，全部修复）
 
 ---
 
@@ -12,9 +12,9 @@
 |------|--------|--------|------|
 | P0 致命（阻断功能） | 0 | 6 | 6 |
 | P1 严重（功能错误） | 0 | 16 | 16 |
-| P2 中等（数据不一致） | 0 | 14 | 14 |
-| P3 低（代码清理/优化） | 0 | 24 | 24 |
-| **合计** | **0** | **60** | **60** |
+| P2 中等（数据不一致） | 0 | 16 | 16 |
+| P3 低（代码清理/优化） | 0 | 25 | 25 |
+| **合计** | **0** | **63** | **63** |
 
 > 🎉 全部问题已修复。后续发现的新问题将追加到对应分类。
 
@@ -370,6 +370,24 @@
 - **描述**：`admin_create_university`、`admin_create_major`、`admin_create_score`、`admin_create_plan` 四个创建端点的返回值为 `{"id": obj.id, **obj.to_dict()}`，但 `to_dict()` 已包含 `id` 字段。Python 字典展开时 `to_dict()` 的 `id` 会覆盖显式设置的 `id`，显式设置完全无效且冗余。
 - **修复内容**：四个端点均简化为 `return obj.to_dict()`。
 
+### R8-P2-1 `PlanView.vue` 分数/省份/科类变更后不清除位次，导致使用过期 rank 生成方案
+- **状态**：✅ 已修复
+- **文件**：`web/src/views/zhiyuan/PlanView.vue`
+- **描述**：用户首次生成志愿方案时，系统自动查询位次并填入 `profile.rank` 字段。如果用户随后修改了分数/省份/科类但未手动清除位次字段，再次点击“生成方案”时系统会复用旧位次值（与新分数不匹配），导致冲稳保三档院校推荐不准确。例如用户从 600 分改为 650 分后，仍使用 600 分对应的位次生成方案，推荐的院校会偏高。
+- **修复内容**：添加 `watch` 监听 `score`、`province`、`subject_type` 变化，当任一值变化时自动清除 `profile.rank`，强制下次生成时重新查询位次。
+
+### R8-P2-2 `UniversityBrowse.vue` 院校搜索结果最多只显示 50 条，无分页控件
+- **状态**：✅ 已修复
+- **文件**：`web/src/views/zhiyuan/logic.js`
+- **描述**：`buildUniversitySearchParams` 函数不设置 `limit` 参数，后端 `list_universities` 默认 `limit=50`。对于院校数量较多的省份（如北京 60+ 所、江苏 70+ 所），不筛选省份时全国 200+ 所院校中只有前 50 所被返回。页面以网格卡片展示，无分页控件，用户无法查看被截断的院校。
+- **修复内容**：在 `buildUniversitySearchParams` 中设置 `limit: 200`，确保最多返回 200 条记录（覆盖全国院校数量）。
+
+### R8-P3-1 Makefile `format` target 未包含 `server` 目录
+- **状态**：✅ 已修复
+- **文件**：`Makefile`
+- **描述**：R7-P3-1 修复了 `lint` target 缺少 `server` 目录的问题，但 `format` target 同样只检查 `package` 目录，`server/` 中的代码格式问题无法被自动修复。
+- **修复内容**：`format` target 的三条 `ruff` 命令均增加 `server` 目录。
+
 ---
 
 ## 六、已修复问题归档（Issue 1-24）
@@ -493,3 +511,12 @@
 | `backend/server/routers/zhiyuan_admin_router.py` | 专业/分数/计划列表端点 JOIN University 表并返回 `university_name`；创建端点移除冗余 `id` 字段 |
 | `web/src/apis/zhiyuan_api.js` | `getPublicStats`/`getDataHealth` 移除 `requiresAuth=false`，确保发送认证头 |
 | `Makefile` | `lint` target 增加 `server` 目录检查；`seed-zhiyuan` 改用通配符 `seed_*.sql` |
+
+### 第八批修复（R8 全量扫描 — 3 个问题）
+
+#### 修改文件
+| 文件 | 修改内容 |
+|------|----------|
+| `web/src/views/zhiyuan/PlanView.vue` | 添加 watch 监听分数/省份/科类变化时清除 rank，防止使用过期位次 |
+| `web/src/views/zhiyuan/logic.js` | `buildUniversitySearchParams` 添加 `limit: 200`，避免搜索结果被截断为 50 条 |
+| `Makefile` | `format` target 增加 `server` 目录检查 |
