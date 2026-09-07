@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>智愿 Zhiyuan · 项目全景观览</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+  <div id="scroll-progress"></div>
+
+  <nav class="navbar glass">
+    <div class="nav-brand">🎓 智愿 Zhiyuan</div>
+    <ul class="nav-links">
+      <li><a href="#hero" class="nav-link active">概览</a></li>
+      <li><a href="#intro" class="nav-link">简介</a></li>
+      <li><a href="#architecture" class="nav-link">架构</a></li>
+      <li><a href="#techstack" class="nav-link">技术栈</a></li>
+      <li><a href="#structure" class="nav-link">目录</a></li>
+      <li><a href="#quickstart" class="nav-link">开始</a></li>
+      <li><a href="#features" class="nav-link">功能</a></li>
+      <li><a href="#docs" class="nav-link">文档</a></li>
+    </ul>
+    <button id="theme-toggle" class="theme-toggle" aria-label="切换主题">🌙</button>
+  </nav>
+
+  <!-- Hero -->
+  <section id="hero" class="hero">
+    <div class="hero-bg"></div>
+    <div class="hero-content">
+      <div class="hero-badge">基于 Yuxi 框架</div>
+      <h1 class="hero-title">智愿 Zhiyuan</h1>
+      <p class="hero-subtitle">基于 RAG + 知识图谱 + 多智能体的志愿填报智能咨询系统</p>
+      <div class="hero-tags">
+        <span class="tag">FastAPI</span>
+        <span class="tag">Vue 3</span>
+        <span class="tag">LangGraph</span>
+        <span class="tag">Milvus</span>
+        <span class="tag">Neo4j</span>
+        <span class="tag">PostgreSQL</span>
+        <span class="tag">Docker</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Intro -->
+  <section id="intro" class="section">
+    <div class="container">
+      <h2 class="section-title">📋 项目简介</h2>
+      <div class="card">
+        <p>智愿（Zhiyuan）是基于 <a href="https://github.com/xerrors/Yuxi" target="_blank" style="color:var(--accent)">Yuxi（语析）</a> 开源框架构建的高考志愿填报智能咨询系统。它整合了 RAG 检索、Milvus 知识库内知识图谱与 LangGraph 多智能体编排，用户通过类 ChatGPT 的界面与智能体对话，获得带引用来源、知识图谱推理的志愿填报建议。</p>
+        <p>管理员可配置知识库、模型与权限，管理院校、专业、分数线等数据。系统支持三级权限体系（superadmin / admin / user），提供完整的院校查询、专业搜索、分数线分析和智能咨询功能。</p>
+        <div class="highlights">
+          <div class="hi"><span class="hi-icon">🎓</span><h4>院校查询</h4><p>全国高校信息检索与对比</p></div>
+          <div class="hi"><span class="hi-icon">📚</span><h4>专业搜索</h4><p>按学科门类、专业名称搜索</p></div>
+          <div class="hi"><span class="hi-icon">📊</span><h4>分数线查询</h4><p>历年录取分数线数据分析</p></div>
+          <div class="hi"><span class="hi-icon">📋</span><h4>招生计划</h4><p>各院校招生计划查询</p></div>
+          <div class="hi"><span class="hi-icon">🤖</span><h4>智能咨询</h4><p>RAG + 知识图谱 AI 志愿推荐</p></div>
+          <div class="hi"><span class="hi-icon">📈</span><h4>数据可视化</h4><p>分数趋势图表、同分人数分析</p></div>
+          <div class="hi"><span class="hi-icon">🔐</span><h4>多角色权限</h4><p>三级权限体系</p></div>
+          <div class="hi"><span class="hi-icon">📝</span><h4>批量导入</h4><p>SQL/CSV 批量数据导入</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Architecture -->
+  <section id="architecture" class="section section-alt">
+    <div class="container">
+      <h2 class="section-title">🏗️ 架构全景</h2>
+      <div class="card">
+        <div class="arch-diagram">
+          <svg viewBox="0 0 960 440" xmlns="http://www.w3.org/2000/svg" class="arch-svg">
+            <defs>
+              <linearGradient id="g-fe" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#42b883"/><stop offset="100%" stop-color="#35495e"/></linearGradient>
+              <linearGradient id="g-be" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#009688"/><stop offset="100%" stop-color="#00695c"/></linearGradient>
+              <linearGradient id="g-wk" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ff7043"/><stop offset="100%" stop-color="#d84315"/></linearGradient>
+              <linearGradient id="g-db" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#7e57c2"/><stop offset="100%" stop-color="#512da8"/></linearGradient>
+              <marker id="arr" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L9,5 L0,10 Z" fill="#888"/></marker>
+              <marker id="arr-ws" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L9,5 L0,10 Z" fill="#42b883"/></marker>
+            </defs>
+            <!-- Frontend -->
+            <rect x="30" y="20" width="240" height="130" rx="14" fill="url(#g-fe)" opacity="0.9"/>
+            <text x="150" y="48" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">Vue 3 前端</text>
+            <rect x="50" y="60" width="90" height="24" rx="5" fill="rgba(255,255,255,0.2)"/><text x="95" y="76" text-anchor="middle" fill="#fff" font-size="10">志愿填报</text>
+            <rect x="150" y="60" width="90" height="24" rx="5" fill="rgba(255,255,255,0.2)"/><text x="195" y="76" text-anchor="middle" fill="#fff" font-size="10">院校查询</text>
+            <rect x="50" y="92" width="90" height="24" rx="5" fill="rgba(255,255,255,0.2)"/><text x="95" y="108" text-anchor="middle" fill="#fff" font-size="10">智能咨询</text>
+            <rect x="150" y="92" width="90" height="24" rx="5" fill="rgba(255,255,255,0.2)"/><text x="195" y="108" text-anchor="middle" fill="#fff" font-size="10">管理后台</text>
+            <!-- API + Worker -->
+            <rect x="340" y="20" width="260" height="180" rx="14" fill="url(#g-be)" opacity="0.9"/>
+            <text x="470" y="48" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">FastAPI 后端</text>
+            <rect x="360" y="60" width="220" height="26" rx="5" fill="rgba(255,255,255,0.2)"/><text x="470" y="77" text-anchor="middle" fill="#fff" font-size="10">Routers (zhiyuan/admin/auth)</text>
+            <rect x="360" y="94" width="220" height="26" rx="5" fill="rgba(255,255,255,0.15)"/><text x="470" y="111" text-anchor="middle" fill="#fff" font-size="10">Services (request queue, run lifecycle)</text>
+            <rect x="360" y="128" width="100" height="26" rx="5" fill="rgba(255,255,255,0.15)"/><text x="410" y="145" text-anchor="middle" fill="#fff" font-size="10">Repositories</text>
+            <rect x="470" y="128" width="110" height="26" rx="5" fill="rgba(255,255,255,0.15)"/><text x="525" y="145" text-anchor="middle" fill="#fff" font-size="10">Agent System</text>
+            <rect x="360" y="162" width="220" height="26" rx="5" fill="rgba(255,255,255,0.15)"/><text x="470" y="179" text-anchor="middle" fill="#fff" font-size="10">ARQ Worker (async tasks)</text>
+            <!-- Worker box -->
+            <rect x="340" y="220" width="260" height="60" rx="14" fill="url(#g-wk)" opacity="0.9"/>
+            <text x="470" y="248" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">LangGraph 智能体</text>
+            <rect x="360" y="258" width="100" height="18" rx="5" fill="rgba(255,255,255,0.15)"/><text x="410" y="271" text-anchor="middle" fill="#fff" font-size="9">RAG 检索</text>
+            <rect x="470" y="258" width="110" height="18" rx="5" fill="rgba(255,255,255,0.15)"/><text x="525" y="271" text-anchor="middle" fill="#fff" font-size="9">知识图谱推理</text>
+            <!-- Data Layer -->
+            <rect x="660" y="20" width="270" height="280" rx="14" fill="url(#g-db)" opacity="0.9"/>
+            <text x="795" y="48" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">存储与数据层</text>
+            <rect x="680" y="60" width="110" height="26" rx="5" fill="rgba(255,255,255,0.2)"/><text x="735" y="77" text-anchor="middle" fill="#fff" font-size="10">PostgreSQL</text>
+            <rect x="800" y="60" width="110" height="26" rx="5" fill="rgba(255,255,255,0.15)"/><text x="855" y="77" text-anchor="middle" fill="#fff" font-size="10">Redis</text>
+            <rect x="680" y="96" width="110" height="26" rx="5" fill="rgba(255,255,255,0.15)"/><text x="735" y="113" text-anchor="middle" fill="#fff" font-size="10">Milvus (向量)</text>
+            <rect x="800" y="96" width="110" height="26" rx="5" fill="rgba(255,255,255,0.15)"/><text x="855" y="113" text-anchor="middle" fill="#fff" font-size="10">Neo4j (图谱)</text>
+            <rect x="680" y="132" width="110" height="26" rx="5" fill="rgba(255,255,255,0.15)"/><text x="735" y="149" text-anchor="middle" fill="#fff" font-size="10">MinIO (对象)</text>
+            <rect x="800" y="132" width="110" height="26" rx="5" fill="rgba(255,255,255,0.15)"/><text x="855" y="149" text-anchor="middle" fill="#fff" font-size="10">Sandbox</text>
+            <rect x="680" y="170" width="230" height="24" rx="5" fill="rgba(255,255,255,0.1)"/><text x="795" y="186" text-anchor="middle" fill="#ccc" font-size="9">院校/专业/分数线/招生计划</text>
+            <rect x="680" y="200" width="230" height="24" rx="5" fill="rgba(255,255,255,0.1)"/><text x="795" y="216" text-anchor="middle" fill="#ccc" font-size="9">AgentRun / 消息 / 队列</text>
+            <rect x="680" y="230" width="230" height="24" rx="5" fill="rgba(255,255,255,0.1)"/><text x="795" y="246" text-anchor="middle" fill="#ccc" font-size="9">LangGraph Checkpoint</text>
+            <rect x="680" y="260" width="230" height="24" rx="5" fill="rgba(255,255,255,0.1)"/><text x="795" y="276" text-anchor="middle" fill="#ccc" font-size="9">知识库文档/向量</text>
+            <!-- Config box -->
+            <rect x="30" y="180" width="240" height="100" rx="14" fill="#5c6bc0" opacity="0.85"/>
+            <text x="150" y="208" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">配置与权限</text>
+            <rect x="50" y="220" width="100" height="22" rx="5" fill="rgba(255,255,255,0.15)"/><text x="100" y="235" text-anchor="middle" fill="#fff" font-size="9">.env / base.toml</text>
+            <rect x="160" y="220" width="90" height="22" rx="5" fill="rgba(255,255,255,0.15)"/><text x="205" y="235" text-anchor="middle" fill="#fff" font-size="9">RBAC</text>
+            <rect x="50" y="250" width="200" height="22" rx="5" fill="rgba(255,255,255,0.15)"/><text x="150" y="265" text-anchor="middle" fill="#fff" font-size="9">superadmin / admin / user</text>
+            <!-- Arrows -->
+            <line x1="270" y1="85" x2="335" y2="73" stroke="#888" stroke-width="2" marker-end="url(#arr)"/>
+            <line x1="270" y1="105" x2="335" y2="245" stroke="#42b883" stroke-width="2" stroke-dasharray="8,4" marker-end="url(#arr-ws)"/>
+            <text x="290" y="180" fill="#42b883" font-size="9">SSE/WS</text>
+            <line x1="600" y1="73" x2="655" y2="73" stroke="#888" stroke-width="2" marker-end="url(#arr)"/>
+            <line x1="600" y1="145" x2="655" y2="109" stroke="#888" stroke-width="2" marker-end="url(#arr)"/>
+            <line x1="600" y1="250" x2="655" y2="145" stroke="#888" stroke-width="2" marker-end="url(#arr)"/>
+            <line x1="270" y1="230" x2="335" y2="100" stroke="#888" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr)"/>
+          </svg>
+        </div>
+        <div class="arch-flow">
+          <h4>智能体请求链路</h4>
+          <ol>
+            <li>前端 <code>AgentView</code> 收集用户输入 → 调用 <code>POST /api/agent/runs</code></li>
+            <li>后端校验用户和智能体 → 创建请求和消息 → 检查 FIFO 队列</li>
+            <li>数据库提交成功后 → 向 ARQ 投递 AgentRun</li>
+            <li>Worker 加载智能体配置 → 执行 LangGraph</li>
+            <li>中间件组合：沙盒文件系统、Skills、MCP、SubAgent、知识库</li>
+            <li>事件写入 Redis Stream → 前端 SSE 消费</li>
+            <li>最终结果写入 PostgreSQL + MinIO</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Tech Stack -->
+  <section id="techstack" class="section">
+    <div class="container">
+      <h2 class="section-title">🧱 技术栈</h2>
+      <div class="card">
+        <table class="tech-table">
+          <thead><tr><th>层</th><th>技术</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td>前端框架</td><td>Vue 3 + Vite</td><td>响应式 UI</td></tr>
+            <tr><td>UI 组件</td><td>Ant Design Vue</td><td>表格、表单、图表</td></tr>
+            <tr><td>状态管理</td><td>Pinia</td><td>跨页面状态</td></tr>
+            <tr><td>后端框架</td><td>FastAPI</td><td>REST API + WebSocket</td></tr>
+            <tr><td>智能体编排</td><td>LangGraph</td><td>多智能体工作流</td></tr>
+            <tr><td>异步任务</td><td>ARQ</td><td>AgentRun 异步执行</td></tr>
+            <tr><td>ORM</td><td>SQLAlchemy</td><td>PostgreSQL 访问</td></tr>
+            <tr><td>关系数据库</td><td>PostgreSQL 16</td><td>业务数据、请求队列、AgentRun</td></tr>
+            <tr><td>缓存</td><td>Redis 7</td><td>ARQ 投递、事件流、缓存</td></tr>
+            <tr><td>对象存储</td><td>MinIO</td><td>附件、知识库文件</td></tr>
+            <tr><td>向量检索</td><td>Milvus v2.5</td><td>RAG 向量检索</td></tr>
+            <tr><td>知识图谱</td><td>Neo4j 5</td><td>图谱推理</td></tr>
+            <tr><td>文档解析</td><td>MinerU + PaddleX</td><td>OCR / 文档分块</td></tr>
+            <tr><td>部署</td><td>Docker Compose</td><td>一体化部署</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Directory Structure -->
+  <section id="structure" class="section section-alt">
+    <div class="container">
+      <h2 class="section-title">📂 目录结构</h2>
+      <div class="card">
+        <div class="tree-container">
+          <details open class="tree-node">
+            <summary>📁 zhiyuan/</summary>
+            <details class="tree-node">
+              <summary>📁 backend/ — 后端服务</summary>
+              <details class="tree-node">
+                <summary>📁 server/ — FastAPI 应用入口</summary>
+                <div class="tree-leaf">📄 main.py — 应用创建与中间件</div>
+                <div class="tree-leaf">📁 routers/ — HTTP 路由边界</div>
+                <div class="tree-leaf">📁 utils/ — 生命周期、配置</div>
+              </details>
+              <details class="tree-node">
+                <summary>📁 package/yuxi/ — 业务主体</summary>
+                <div class="tree-leaf">📁 agents/ — LangGraph 智能体</div>
+                <div class="tree-leaf">📁 services/ — 用例层</div>
+                <div class="tree-leaf">📁 repositories/ — PostgreSQL 访问</div>
+                <div class="tree-leaf">📁 storage/ — DB/Redis/MinIO/Neo4j</div>
+                <div class="tree-leaf">📁 knowledge/ — 知识库/解析/图谱</div>
+                <div class="tree-leaf">📁 models/ — 模型适配</div>
+                <div class="tree-leaf">📁 config/ — 系统与用户配置</div>
+              </details>
+              <div class="tree-leaf">📁 scripts/ — 后端脚本</div>
+              <div class="tree-leaf">📁 test/ — 单元/集成/E2E 测试</div>
+            </details>
+            <details class="tree-node">
+              <summary>📁 web/ — Vue3 前端</summary>
+              <div class="tree-leaf">📁 src/apis/ — API 封装</div>
+              <div class="tree-leaf">📁 src/views/ — 页面组件</div>
+              <div class="tree-leaf">📁 src/components/ — 可复用组件</div>
+              <div class="tree-leaf">📁 src/composables/ — 组合式函数</div>
+              <div class="tree-leaf">📁 src/stores/ — Pinia 状态</div>
+              <div class="tree-leaf">📁 src/router/ — 路由</div>
+            </details>
+            <div class="tree-leaf">📁 data/ — 种子数据</div>
+            <div class="tree-leaf">📁 docker/ — Dockerfile 与配置</div>
+            <div class="tree-leaf">📁 docs/ — VitePress 文档</div>
+            <div class="tree-leaf">📁 scripts/ — 初始化脚本</div>
+            <div class="tree-leaf">📄 docker-compose.yml / docker-compose.prod.yml</div>
+            <div class="tree-leaf">📄 Makefile — 构建/测试/部署</div>
+            <div class="tree-leaf">📄 ARCHITECTURE.md / PROJECT_ROADMAP.md</div>
+            <div class="tree-leaf">📄 .gitignore / LICENSE / README.md / CONTRIBUTING.md / CHANGELOG.md</div>
+          </details>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Quick Start -->
+  <section id="quickstart" class="section">
+    <div class="container">
+      <h2 class="section-title">🚀 快速开始</h2>
+      <div class="card">
+        <h4>前置要求</h4>
+        <ul class="req-list">
+          <li>✅ Docker + Docker Compose</li>
+          <li>✅ Node.js 18+ (前端开发)</li>
+          <li>✅ Python 3.11+ (后端开发)</li>
+          <li>✅ 兼容 OpenAI 接口的大模型 API</li>
+        </ul>
+        <h4>Docker 启动</h4>
+        <div class="code-block">
+          <div class="code-header"><span>Bash</span><button class="copy-btn" onclick="copyCode(this)">复制</button></div>
+<pre><code># 克隆并初始化
+git clone https://github.com/LPK3215/zhiyuan.git
+cd zhiyuan
+./scripts/init.sh
+
+# 配置环境变量
+cp .env.template .env
+# 编辑 .env
+
+# 启动（完整模式）
+make up
+
+# 或轻量模式
+make up-lite</code></pre>
+        </div>
+        <p>前端：<code>http://localhost:5173</code> ｜ 后端 API：<code>http://localhost:5050</code></p>
+        <h4>常用命令</h4>
+        <div class="code-block">
+          <div class="code-header"><span>Makefile</span><button class="copy-btn" onclick="copyCode(this)">复制</button></div>
+<pre><code>make up          # 启动所有服务
+make up-lite     # 轻量模式
+make down        # 停止服务
+make logs        # 查看 API 日志
+make lint        # 代码检查
+make format      # 代码格式化
+make seed        # 导入种子数据
+make reset       # 重置并重新初始化</code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section id="features" class="section section-alt">
+    <div class="container">
+      <h2 class="section-title">⚙️ 核心功能</h2>
+      <div class="card">
+        <table class="api-table">
+          <thead><tr><th>功能模块</th><th>说明</th><th>角色</th></tr></thead>
+          <tbody>
+            <tr><td>志愿填报</td><td>智能志愿推荐与方案生成</td><td>user</td></tr>
+            <tr><td>院校查询</td><td>全国高校信息检索与对比</td><td>user</td></tr>
+            <tr><td>专业搜索</td><td>按学科门类/名称搜索</td><td>user</td></tr>
+            <tr><td>分数线查询</td><td>历年录取分数与趋势</td><td>user</td></tr>
+            <tr><td>招生计划</td><td>各院校招生计划查询</td><td>user</td></tr>
+            <tr><td>智能咨询</td><td>RAG + 知识图谱 AI 对话</td><td>user</td></tr>
+            <tr><td>数据管理</td><td>院校/专业/分数 CUD</td><td>admin</td></tr>
+            <tr><td>批量导入</td><td>SQL/CSV 数据导入</td><td>admin</td></tr>
+            <tr><td>系统配置</td><td>模型/权限/知识库管理</td><td>superadmin</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Docs -->
+  <section id="docs" class="section">
+    <div class="container">
+      <h2 class="section-title">📚 文档索引</h2>
+      <div class="card">
+        <div class="docs-grid">
+          <a class="doc-card" href="#"><strong>架构说明</strong><span>ARCHITECTURE.md</span><p>代码地图与架构不变量</p></a>
+          <a class="doc-card" href="#"><strong>项目路线图</strong><span>PROJECT_ROADMAP.md</span><p>当前问题与未来计划</p></a>
+          <a class="doc-card" href="#"><strong>优化日志</strong><span>CHANGELOG-zhiyuan-optimization.md</span><p>历轮优化记录</p></a>
+          <a class="doc-card" href="#"><strong>实施文档</strong><span>智愿实施文档.md</span><p>项目实施方案</p></a>
+          <a class="doc-card" href="#"><strong>问题记录</strong><span>ISSUES.md</span><p>已知问题与待办</p></a>
+          <a class="doc-card" href="#"><strong>VitePress 文档</strong><span>docs/</span><p>完整项目文档站</p></a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- License -->
+  <section class="section section-alt">
+    <div class="container">
+      <h2 class="section-title">📄 许可证</h2>
+      <div class="card license-card">
+        <p>本项目基于 <strong>MIT License</strong> 开源。</p>
+        <p>Copyright © 2024-2026 LPK3215</p>
+        <p>仓库地址：<a href="https://github.com/LPK3215/zhiyuan" target="_blank" style="color:var(--accent)">https://github.com/LPK3215/zhiyuan</a></p>
+        <p style="margin-top:16px;font-size:13px;color:var(--text-secondary)">基于 <a href="https://github.com/xerrors/Yuxi" target="_blank" style="color:var(--accent)">Yuxi (语析)</a> 框架构建</p>
+      </div>
+    </div>
+  </section>
+
+  <button id="back-to-top" class="back-to-top" aria-label="返回顶部">↑</button>
+
+  <footer class="footer">
+    <p>Generated by CatPaw · 2026-09-08 · Zhiyuan v1.0.0</p>
+  </footer>
+
+  <script src="./script.js"></script>
+</body>
+</html>
